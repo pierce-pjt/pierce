@@ -45,7 +45,6 @@
 모든 컨테이너가 성공적으로 실행되면, 다음 주소로 접속할 수 있습니다.
 
 * **Airflow 대시보드:** [http://localhost:8080](http://localhost:8080)
-    * (ID: `admin` / PW: `admin`)
 * **Django 개발 서버:** [http://localhost:8000](http://localhost:8000)
 * **Django 어드민:** [http://localhost:8000/admin](http://localhost:8000/admin)
 
