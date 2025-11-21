@@ -13,18 +13,13 @@ appsecret = Variable.get("app_secret")
 
 URL_BASE = "https://openapivts.koreainvestment.com:29443"
 PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-
 TOKEN_PATH = "/opt/airflow/data/access_token.txt"
 POSTGRES_CONN_ID = "stock_postgres"
-
-STOCK_CODES = ["005930", "000660"]  # 원하면 종목 더 추가 가능
 
 default_args = {
     "owner": "airflow",
     "depends_on_past": False,
     "start_date": datetime(2025, 11, 20),
-    "email_on_failure": False,
-    "email_on_retry": False,
     "retries": 1,
     "retry_delay": timedelta(minutes=3),
 }
@@ -32,22 +27,20 @@ default_args = {
 dag = DAG(
     dag_id="hourly_stock_to_postgres",
     default_args=default_args,
-    description="Fetch stock prices hourly and save to Postgres",
-    schedule_interval="0 9-18 * * 1-5",  # 09:00~18:00, 평일 매시간 실행
+    description="Fetch stock prices hourly from Korea Investment API and store to Postgres",
+    schedule_interval="0 9-18 * * 1-5",    # 평일 09:00~18:00 매시간
 )
 
 
 def read_token():
     if not os.path.exists(TOKEN_PATH):
-        raise FileNotFoundError("Access token file not found")
+        raise FileNotFoundError("Access token missing")
     with open(TOKEN_PATH, "r") as f:
-        token = f.read().strip()
-    return token
+        return f.read().strip()
 
 
 def fetch_and_store_stock_data(**context):
     access_token = read_token()
-
     today = datetime.today().strftime("%Y%m%d")
 
     headers = {
@@ -55,14 +48,24 @@ def fetch_and_store_stock_data(**context):
         "authorization": f"Bearer {access_token}",
         "appKey": appkey,
         "appSecret": appsecret,
-        "tr_id": "FHKST03010100",  # 기간별 일자데이터
+        "tr_id": "FHKST03010100",
         "custtype": "P",
     }
 
     hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
     url = f"{URL_BASE}{PRICE_PATH}"
 
-    for code in STOCK_CODES:
+    # 🔥 KOSPI + KOSDAQ 전체 종목코드를 PostgreSQL에서 로드
+    df_symbols = hook.get_pandas_df("""
+        SELECT symbol FROM stock_list 
+        WHERE market IN ('KOSPI', 'KOSDAQ')
+    """)
+
+    symbols = df_symbols["symbol"].tolist()
+
+    print(f"총 {len(symbols)}개 종목 수집 실행")
+
+    for code in symbols:
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": code,
@@ -75,19 +78,17 @@ def fetch_and_store_stock_data(**context):
         res = requests.get(url, headers=headers, params=params)
 
         if res.status_code != 200:
-            print(f"[{code}] API error: {res.text}")
+            print(f"[{code}] API 호출 실패: {res.text}")
             continue
 
         data = res.json()
         rows = data.get("output2", [])
 
         if not rows:
-            print(f"[{code}] No price data")
+            print(f"[{code}] 데이터 없음")
             continue
 
         for row in rows:
-            trade_date = datetime.strptime(row["stck_bsop_date"], "%Y%m%d").date()
-
             sql = """
             INSERT INTO stock_daily_prices
                 (symbol, trade_date, open, high, low, close, volume)
@@ -104,7 +105,7 @@ def fetch_and_store_stock_data(**context):
                 sql,
                 parameters=(
                     code,
-                    trade_date,
+                    datetime.strptime(row["stck_bsop_date"], "%Y%m%d").date(),
                     float(row["stck_oprc"]),
                     float(row["stck_hgpr"]),
                     float(row["stck_lwpr"]),
@@ -119,6 +120,5 @@ def fetch_and_store_stock_data(**context):
 fetch_and_store_task = PythonOperator(
     task_id="fetch_and_store_stock_data",
     python_callable=fetch_and_store_stock_data,
-    provide_context=True,
     dag=dag,
 )
