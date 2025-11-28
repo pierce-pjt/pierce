@@ -16,4 +16,6 @@ RUN pip install --no-cache-dir \
     psycopg2-binary \
     Django \
     pgvector \
-    sentence-transformers
+    sentence-transformers \
+    finance-datareader \
+    openai \
