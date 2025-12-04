@@ -6,7 +6,9 @@ from pgvector.django import VectorField
 # ==========================================
 
 class User(models.Model):
-    nickname = models.CharField(max_length=255)
+    # 닉네임은 한 번만 쓰이도록 unique 설정
+    nickname = models.CharField(max_length=255, unique=True)
+    # 해시된 비밀번호가 들어갈 칸
     password = models.CharField(max_length=255)
     profile_image_url = models.CharField(max_length=255, null=True, blank=True)
 

@@ -1,19 +1,22 @@
 # rag/views.py
 
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from pgvector.django import CosineDistance
+from rest_framework.permissions import AllowAny
+from django.contrib.auth.hashers import check_password
 from django.conf import settings
+from pgvector.django import CosineDistance
 import openai
 
 from .models import (
-    User, Post, Follow, 
+    User, Post, Follow,
     StockDailyPrice, StockHolding, TransactionHistory,
     HistoricalNews, LatestNews
 )
 from .serializers import (
-    UserSerializer, PostSerializer, FollowSerializer,
+    UserSerializer, UserReadSerializer, UserLoginSerializer,
+    PostSerializer, FollowSerializer,
     StockDailyPriceSerializer, StockHoldingSerializer, TransactionHistorySerializer,
     HistoricalNewsSerializer, LatestNewsSerializer
 )
@@ -55,11 +58,104 @@ def get_embedding(text):
         return None
 # --------------------------------------
 
-# 1. 일반 CRUD ViewSets (기존과 동일)
+# 1. User ViewSet -----------------------------
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
-    serializer_class = UserSerializer
+    serializer_class = UserSerializer  # 기본은 생성/수정용
 
+    def get_permissions(self):
+        # 회원가입, 로그인은 누구나 접근 가능
+        if self.action in ["register", "login", "create"]:
+            return [AllowAny()]
+        return super().get_permissions()
+
+    def list(self, request, *args, **kwargs):
+        # 유저 목록 조회 시 비밀번호가 안 보이도록 ReadSerializer 사용
+        users = self.get_queryset()
+        serializer = UserReadSerializer(users, many=True)
+        return Response(serializer.data)
+
+    def retrieve(self, request, *args, **kwargs):
+        user = self.get_object()
+        serializer = UserReadSerializer(user)
+        return Response(serializer.data)
+
+    # POST /api/users/register/
+    @action(detail=False, methods=["post"], permission_classes=[AllowAny])
+    def register(self, request):
+        """
+        회원가입: nickname, password, profile_image_url(optional)
+        """
+        serializer = UserSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            read_data = UserReadSerializer(user).data
+            return Response(read_data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # POST /api/users/login/
+    @action(detail=False, methods=["post"], permission_classes=[AllowAny])
+    def login(self, request):
+        """
+        로그인: nickname, password
+        - 성공 시 세션에 user_id 저장
+        """
+        login_serializer = UserLoginSerializer(data=request.data)
+        if not login_serializer.is_valid():
+            return Response(login_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        nickname = login_serializer.validated_data["nickname"]
+        password = login_serializer.validated_data["password"]
+
+        try:
+            user = User.objects.get(nickname=nickname)
+        except User.DoesNotExist:
+            return Response({"detail": "존재하지 않는 닉네임입니다."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if not check_password(password, user.password):
+            return Response({"detail": "비밀번호가 올바르지 않습니다."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # 세션 로그인 (request.session 사용)
+        request.session["user_id"] = user.id
+
+        return Response({
+            "message": "로그인 성공",
+            "user": UserReadSerializer(user).data,
+        })
+
+    # POST /api/users/logout/
+    @action(detail=False, methods=["post"])
+    def logout(self, request):
+        """
+        로그아웃: 세션 제거
+        """
+        request.session.flush()
+        return Response({"message": "로그아웃 되었습니다."})
+
+    # GET /api/users/me/
+    @action(detail=False, methods=["get"])
+    def me(self, request):
+        """
+        현재 로그인한 유저 정보 반환 (세션 기반)
+        """
+        user_id = request.session.get("user_id")
+        if not user_id:
+            return Response({"detail": "로그인이 필요합니다."},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"detail": "유저를 찾을 수 없습니다."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        serializer = UserReadSerializer(user)
+        return Response(serializer.data)
+
+
+# ---------------------------------------------
 class PostViewSet(viewsets.ModelViewSet):
     queryset = Post.objects.all()
     serializer_class = PostSerializer
@@ -81,7 +177,9 @@ class TransactionHistoryViewSet(viewsets.ModelViewSet):
     serializer_class = TransactionHistorySerializer
 
 
-# 2. RAG (뉴스) ViewSets - OpenAI 적용
+
+
+# 2. RAG (뉴스) ViewSets - OpenAI 적용 --------
 class HistoricalNewsViewSet(viewsets.ModelViewSet):
     queryset = HistoricalNews.objects.all()
     serializer_class = HistoricalNewsSerializer
