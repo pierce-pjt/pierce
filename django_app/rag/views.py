@@ -1,22 +1,28 @@
 # rag/views.py
-
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
-from django.contrib.auth.hashers import check_password
+from rest_framework.permissions import AllowAny   # ✅ 추가
+from rest_framework.exceptions import PermissionDenied
+
+from django.contrib.auth.hashers import check_password  # ✅ 추가
+
 from django.conf import settings
+from django.db.models import Count
 from pgvector.django import CosineDistance
+
 import openai
 
 from .models import (
     User, Post, Follow,
     StockDailyPrice, StockHolding, TransactionHistory,
-    HistoricalNews, LatestNews
+    HistoricalNews, LatestNews,
+    Comment, PostLike,
 )
 from .serializers import (
     UserSerializer, UserReadSerializer, UserLoginSerializer,
-    PostSerializer, FollowSerializer,
+    PostWriteSerializer, PostReadSerializer, CommentSerializer,
+    FollowSerializer,
     StockDailyPriceSerializer, StockHoldingSerializer, TransactionHistorySerializer,
     HistoricalNewsSerializer, LatestNewsSerializer
 )
@@ -157,8 +163,115 @@ class UserViewSet(viewsets.ModelViewSet):
 
 # ---------------------------------------------
 class PostViewSet(viewsets.ModelViewSet):
-    queryset = Post.objects.all()
-    serializer_class = PostSerializer
+    queryset = Post.objects.all().select_related("author")
+    # 기본은 쓰기용
+    serializer_class = PostWriteSerializer
+
+    def get_serializer_class(self):
+        # 조회(list/retrieve/feed)일 때는 읽기용 시리얼라이저
+        if self.action in ["list", "retrieve", "feed"]:
+            return PostReadSerializer
+        return PostWriteSerializer
+
+    def get_queryset(self):
+        qs = Post.objects.all().select_related("author")
+        # 댓글/좋아요 개수 annotate
+        qs = qs.annotate(
+            comment_count=Count("comments"),
+            like_count=Count("likes"),
+        )
+        return qs
+
+    def _get_current_user(self, request):
+        user_id = request.session.get("user_id")
+        if not user_id:
+            raise PermissionDenied("로그인이 필요합니다.")
+        try:
+            return User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            raise PermissionDenied("유저 정보를 찾을 수 없습니다.")
+
+    def perform_create(self, serializer):
+        """글 작성 시 로그인한 유저를 author로 자동 설정"""
+        user = self._get_current_user(self.request)
+        serializer.save(author=user)
+
+    def perform_update(self, serializer):
+        """작성자만 수정 가능"""
+        user = self._get_current_user(self.request)
+        post = self.get_object()
+        if post.author_id != user.id:
+            raise PermissionDenied("본인이 작성한 글만 수정할 수 있습니다.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """작성자만 삭제 가능"""
+        user = self._get_current_user(self.request)
+        if instance.author_id != user.id:
+            raise PermissionDenied("본인이 작성한 글만 삭제할 수 있습니다.")
+        instance.delete()
+
+    # GET /api/posts/feed/?ticker=005930
+    @action(detail=False, methods=["get"])
+    def feed(self, request):
+        """
+        전체 피드 목록 (최신순)
+        ?ticker=005930 쿼리로 특정 종목 글만 필터 가능
+        """
+        ticker = request.query_params.get("ticker")
+        qs = self.get_queryset().order_by("-created_at")
+        if ticker:
+            qs = qs.filter(ticker=ticker)
+
+        serializer = self.get_serializer(qs, many=True, context={"request": request})
+        return Response(serializer.data)
+
+    # POST /api/posts/{id}/like/
+    @action(detail=True, methods=["post"])
+    def like(self, request, pk=None):
+        """
+        좋아요 토글
+        - 로그인 필요
+        - 이미 눌러져 있으면 취소
+        """
+        user = self._get_current_user(request)
+        post = self.get_object()
+
+        like_obj, created = PostLike.objects.get_or_create(post=post, user=user)
+        if not created:
+            # 이미 눌렀으면 취소
+            like_obj.delete()
+            liked = False
+        else:
+            liked = True
+
+        like_count = post.likes.count()
+        return Response({
+            "liked": liked,
+            "like_count": like_count,
+        })
+
+    # GET/POST /api/posts/{id}/comments/
+    @action(detail=True, methods=["get", "post"])
+    def comments(self, request, pk=None):
+        """
+        댓글 목록 조회(GET) / 댓글 작성(POST)
+        """
+        post = self.get_object()
+
+        if request.method == "GET":
+            comments = post.comments.select_related("author").order_by("created_at")
+            serializer = CommentSerializer(comments, many=True)
+            return Response(serializer.data)
+
+        # POST: 댓글 작성
+        user = self._get_current_user(request)
+        serializer = CommentSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(post=post, author=user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class FollowViewSet(viewsets.ModelViewSet):
     queryset = Follow.objects.all()

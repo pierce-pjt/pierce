@@ -4,7 +4,8 @@ from django.contrib.auth.hashers import make_password
 from .models import (
     User, Post, Follow,
     StockDailyPrice, StockHolding, TransactionHistory,
-    HistoricalNews, LatestNews
+    HistoricalNews, LatestNews,
+    Comment, PostLike,
 )
 
 # ---- User 관련 ----
@@ -44,13 +45,59 @@ class UserLoginSerializer(serializers.Serializer):
     nickname = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
+# ---- Feed(피드) 관련 ----
 
-# ---- 이하 기존 serializer 유지 ----
+class CommentSerializer(serializers.ModelSerializer):
+    author = UserReadSerializer(read_only=True)
 
-class PostSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Comment
+        fields = ("id", "post", "author", "content", "created_at")
+        read_only_fields = ("id", "post", "author", "created_at")
+
+
+class PostWriteSerializer(serializers.ModelSerializer):
+    """글 작성/수정용 - author는 서버에서 세션 기준으로 채움"""
+
     class Meta:
         model = Post
-        fields = '__all__'
+        fields = ("id", "title", "content", "ticker", "created_at", "updated_at")
+        read_only_fields = ("id", "created_at", "updated_at")
+
+
+class PostReadSerializer(serializers.ModelSerializer):
+    """피드/상세 조회용"""
+    author = UserReadSerializer(read_only=True)
+    comment_count = serializers.IntegerField(read_only=True)
+    like_count = serializers.IntegerField(read_only=True)
+    is_liked = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Post
+        fields = (
+            "id",
+            "title",
+            "content",
+            "author",
+            "ticker",
+            "created_at",
+            "updated_at",
+            "comment_count",
+            "like_count",
+            "is_liked",
+        )
+
+    def get_is_liked(self, obj):
+        """현재 로그인한 유저가 이 글에 좋아요 눌렀는지 여부"""
+        request = self.context.get("request")
+        if not request:
+            return False
+        user_id = request.session.get("user_id")
+        if not user_id:
+            return False
+        return obj.likes.filter(user_id=user_id).exists()
+
+# ---- 이하 기존 serializer 유지 ----
 
 class FollowSerializer(serializers.ModelSerializer):
     class Meta:

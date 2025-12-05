@@ -19,7 +19,16 @@ class Post(models.Model):
     title = models.CharField(max_length=255)
     content = models.TextField()
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='posts')
+
+    # 👇 어떤 종목에 대한 글인지 표시 (선택)
+    ticker = models.CharField(max_length=12, db_index=True, null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
+    # 수정 시간도 기록해 두면 나중에 “수정됨” 표시하기 좋음
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.title} ({self.author.nickname})"
 
 class Follow(models.Model):
     following_user = models.ForeignKey(User, related_name='followers', on_delete=models.CASCADE)
@@ -29,6 +38,30 @@ class Follow(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['following_user', 'follower_user'], name='unique_follow')
         ]
+
+# feed page features
+class Comment(models.Model):
+    """피드 댓글"""
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="comments")
+    author = models.ForeignKey(User, on_delete=models.CASCADE, related_name="comments")
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Comment({self.author.nickname} -> Post {self.post_id})"
+
+
+class PostLike(models.Model):
+    """피드 좋아요"""
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="likes")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="liked_posts")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("post", "user")
+
+    def __str__(self):
+        return f"Like({self.user.nickname} -> Post {self.post_id})"
 
 # ==========================================
 # 2. Stocks
