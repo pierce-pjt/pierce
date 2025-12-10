@@ -1,23 +1,39 @@
+# rag/serializers.py
+
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from .models import (
-    User, Post, Follow,
-    StockDailyPrice, StockHolding, TransactionHistory,
+    User, Post, Follow, Comment, PostLike,
+    # 👇 [변경] 새 주식 모델들로 교체
+    Company, StockPrice, StockHolding, Transaction,
     HistoricalNews, LatestNews,
-    Comment, PostLike,
 )
 
 # ==========================================
-# 1. User (회원가입, 로그인, 조회)
+# 1. User (회원가입, 로그인, 조회) - [기존 코드 유지]
 # ==========================================
 
-# (1) 읽기 전용: 유저 정보를 보여줄 때 사용 (비밀번호 제외)
 class UserReadSerializer(serializers.ModelSerializer):
+    followers_count = serializers.IntegerField(read_only=True)
+    following_count = serializers.IntegerField(read_only=True)
+    is_following = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ("id", "nickname", "profile_image_url")
+        fields = [
+            'id', 'nickname', 'profile_image_url', 
+            'followers_count', 'following_count', 'is_following'
+        ]
 
-# (2) 쓰기 전용: 회원가입/수정 시 사용 (비밀번호 해싱 처리)
+    def get_is_following(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return False
+        current_user_id = request.session.get('user_id')
+        if not current_user_id:
+            return False
+        return obj.followers.filter(follower_id=current_user_id).exists()
+
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -27,30 +43,26 @@ class UserSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
-        # 비밀번호를 평문으로 저장하지 않고 암호화(Hash)해서 저장
         raw_password = validated_data.get("password")
         validated_data["password"] = make_password(raw_password)
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        # 비밀번호 변경 시에만 암호화 수행
         password = validated_data.get("password", None)
         if password:
             validated_data["password"] = make_password(password)
         return super().update(instance, validated_data)
 
-# (3) 로그인 요청 검증용 (DB 저장 안 함)
 class UserLoginSerializer(serializers.Serializer):
     nickname = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
 
 # ==========================================
-# 2. Feed & Community (게시글, 댓글, 팔로우)
+# 2. Feed & Community - [기존 코드 유지]
 # ==========================================
 
 class CommentSerializer(serializers.ModelSerializer):
-    # 작성자 정보는 읽기 전용으로 상세하게 보여줌
     author = UserReadSerializer(read_only=True)
 
     class Meta:
@@ -58,21 +70,19 @@ class CommentSerializer(serializers.ModelSerializer):
         fields = ("id", "post", "author", "content", "created_at")
         read_only_fields = ("id", "post", "author", "created_at")
 
-
 class PostWriteSerializer(serializers.ModelSerializer):
-    """글 작성/수정용 시리얼라이저"""
     class Meta:
         model = Post
         fields = ("id", "title", "content", "ticker", "created_at", "updated_at")
         read_only_fields = ("id", "created_at", "updated_at")
 
-
 class PostReadSerializer(serializers.ModelSerializer):
-    """글 조회용 시리얼라이저 (작성자 정보, 좋아요 여부 포함)"""
     author = UserReadSerializer(read_only=True)
     comment_count = serializers.IntegerField(read_only=True)
     like_count = serializers.IntegerField(read_only=True)
     is_liked = serializers.SerializerMethodField()
+    # 댓글도 같이 보고 싶다면 아래 줄 주석 해제
+    # comments = CommentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Post
@@ -80,19 +90,17 @@ class PostReadSerializer(serializers.ModelSerializer):
             "id", "title", "content", "author", "ticker",
             "created_at", "updated_at",
             "comment_count", "like_count", "is_liked",
+            # "comments"
         )
 
     def get_is_liked(self, obj):
-        """현재 로그인한 유저가 좋아요를 눌렀는지 확인"""
         request = self.context.get("request")
         if not request:
             return False
-        # 세션에서 user_id 가져오기
         user_id = request.session.get("user_id")
         if not user_id:
             return False
         return obj.likes.filter(user_id=user_id).exists()
-
 
 class FollowSerializer(serializers.ModelSerializer):
     class Meta:
@@ -101,27 +109,46 @@ class FollowSerializer(serializers.ModelSerializer):
 
 
 # ==========================================
-# 3. Stocks & Assets (주식, 자산)
+# 3. Stocks & Assets - [🚨 리모델링 반영]
 # ==========================================
 
-class StockDailyPriceSerializer(serializers.ModelSerializer):
+# (1) 종목 마스터 (Company)
+class CompanySerializer(serializers.ModelSerializer):
     class Meta:
-        model = StockDailyPrice
-        fields = '__all__'
+        model = Company
+        fields = ['code', 'name', 'market', 'is_active']
 
+# (2) 시세 데이터 (StockPrice) - 구 StockDailyPrice 대체
+class StockPriceSerializer(serializers.ModelSerializer):
+    # 회사 이름도 같이 보여주기 위해 추가
+    company_name = serializers.ReadOnlyField(source='company.name')
+
+    class Meta:
+        model = StockPrice
+        # trade_date 대신 record_time 사용
+        fields = ['company', 'company_name', 'record_time', 'open', 'high', 'low', 'close', 'volume']
+
+# (3) 보유 잔고 (StockHolding) - ticker 대신 company 객체 사용
 class StockHoldingSerializer(serializers.ModelSerializer):
+    company_name = serializers.ReadOnlyField(source='company.name')
+    company_code = serializers.ReadOnlyField(source='company.code')
+
     class Meta:
         model = StockHolding
-        fields = '__all__'
+        fields = ['company', 'company_code', 'company_name', 'quantity', 'average_price', 'updated_at']
 
-class TransactionHistorySerializer(serializers.ModelSerializer):
+# (4) 거래 내역 (Transaction) - 구 TransactionHistory 대체
+class TransactionSerializer(serializers.ModelSerializer):
+    company_name = serializers.ReadOnlyField(source='company.name')
+    
     class Meta:
-        model = TransactionHistory
-        fields = '__all__'
+        model = Transaction
+        fields = ['id', 'user', 'company', 'company_name', 'type', 'price', 'quantity', 'amount', 'created_at']
+        read_only_fields = ['user', 'amount', 'created_at']
 
 
 # ==========================================
-# 4. News & RAG (뉴스, 벡터)
+# 4. News & RAG - [기존 코드 유지]
 # ==========================================
 
 class HistoricalNewsSerializer(serializers.ModelSerializer):
@@ -130,10 +157,11 @@ class HistoricalNewsSerializer(serializers.ModelSerializer):
     class Meta:
         model = HistoricalNews
         fields = '__all__'
-        # 임베딩 벡터는 서버가 자동 생성하므로 사용자가 입력하지 못하게 함
         read_only_fields = ('body_embedding_vector',)
 
 class LatestNewsSerializer(serializers.ModelSerializer):
+    distance = serializers.FloatField(read_only=True, required=False) # 거리 계산 결과 필드 추가
+
     class Meta:
         model = LatestNews
         fields = '__all__'

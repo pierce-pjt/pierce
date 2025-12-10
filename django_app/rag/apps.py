@@ -1,6 +1,9 @@
+# rag/apps.py
 from django.apps import AppConfig
-
 
 class RagConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'rag'
+
+    def ready(self):
+        import rag.signals  # 👈 이 줄 추가!
