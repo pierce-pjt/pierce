@@ -1,15 +1,19 @@
+version: '3.8'
+
 services:
+  # ==========================================
+  # 1. 데이터베이스 (PostgreSQL + pgvector)
+  # ==========================================
   postgres:
     image: ankane/pgvector:latest
     container_name: rag_postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB} # Django용 DB가 기본 생성됨
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # 👇 [수정] DB 초기화 스크립트 마운트 (airflow_db 생성용)
-      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql # 님 설정 유지
     ports:
       - "5432:5432"
     healthcheck:
@@ -19,18 +23,35 @@ services:
     networks:
       - app_network
 
+  # ==========================================
+  # 2. Redis (Airflow 메시지 브로커 - 누락 복구)
+  # ==========================================
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "16379:6379"
+    networks:
+      - app_network
+
+  # ==========================================
+  # 3. Airflow (Init + Web + Scheduler)
+  # ==========================================
   airflow-init:
-    # 👇 [수정] 이미지 직접 지정 대신 빌드 사용
     build:
       context: .
       dockerfile: Dockerfile.airflow
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      # 👇 [확인] DB 이름을 airflow_db로 명확히 지정
+      # CeleryExecutor로 변경 (Redis 사용)
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow_db
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow_db
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
       AIRFLOW__CORE__FERNET_KEY: "46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho="
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
     volumes:
@@ -40,7 +61,6 @@ services:
     entrypoint: /bin/bash
     command:
       - -c
-      # 👇 [수정] pip install 제거 (이미지에 포함됨), DB 마이그레이션만 수행
       - |
         airflow db migrate
         airflow users create \
@@ -54,7 +74,6 @@ services:
       - app_network
 
   airflow-webserver:
-    # 👇 [수정] 빌드 사용 (라이브러리 포함된 이미지)
     build:
       context: .
       dockerfile: Dockerfile.airflow
@@ -64,8 +83,10 @@ services:
       airflow-init:
         condition: service_completed_successfully
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow_db
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow_db
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
       AIRFLOW__CORE__FERNET_KEY: "46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho="
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__WEBSERVER__SECRET_KEY: "my_secret_key_1234"
@@ -73,7 +94,6 @@ services:
       DJANGO_DB_NAME: ${POSTGRES_DB}
       DJANGO_DB_USER: ${POSTGRES_USER}
       DJANGO_DB_PASSWORD: ${POSTGRES_PASSWORD}
-      # 👇 [추가] shared 폴더를 파이썬 경로에 추가 (공유 코드 import 가능하게)
       PYTHONPATH: "/opt/airflow/shared:${PYTHONPATH}"
     volumes:
       - ./dags:/opt/airflow/dags
@@ -86,8 +106,6 @@ services:
       - app_network
 
   airflow-scheduler:
-    hostname: airflow-scheduler
-    # 👇 [수정] 빌드 사용
     build:
       context: .
       dockerfile: Dockerfile.airflow
@@ -97,8 +115,10 @@ services:
       airflow-init:
         condition: service_completed_successfully
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow_db
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow_db
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
       AIRFLOW__CORE__FERNET_KEY: "46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho="
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__WEBSERVER__SECRET_KEY: "my_secret_key_1234"
@@ -109,7 +129,6 @@ services:
       MOJITO_API_KEY: ${MOJITO_API_KEY}
       MOJITO_API_SECRET: ${MOJITO_API_SECRET}
       MOJITO_ACC_NO: ${MOJITO_ACC_NO}
-      # 👇 [추가] PYTHONPATH 추가
       PYTHONPATH: "/opt/airflow/shared:${PYTHONPATH}"
     volumes:
       - ./dags:/opt/airflow/dags
@@ -119,13 +138,16 @@ services:
     networks:
       - app_network
 
+  # ==========================================
+  # 4. Django 백엔드
+  # ==========================================
   django:
     build: ./django_app
     container_name: django_web
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - ./django_app:/app
-      - ./shared:/app/shared
+      - ./shared:/app/shared  # 님 설정 유지
       - airflow_data:/opt/airflow/data
     ports:
       - "8000:8000"
@@ -140,11 +162,28 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_API_BASE: ${OPENAI_API_BASE}
       DEBUG: ${DEBUG}
-      # 👇 [추가] Django에서도 shared import 하려면 필요할 수 있음
       PYTHONPATH: "/app/shared:${PYTHONPATH}"
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - app_network
+
+  # ==========================================
+  # 5. Vue 프론트엔드 
+  # ==========================================
+  vue_web:
+    build: ./frontend
+    container_name: vue_web
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - django
+    stdin_open: true
+    tty: true
     networks:
       - app_network
 
