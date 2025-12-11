@@ -35,9 +35,9 @@ def get_kospi_tickers():
     return ticker_names
 
 def fetch_latest_bar(broker, ticker, name):
-    """최신 1시간봉 조회 (좀비 모드: 차단되면 60초 대기)"""
+    """최신 1시간봉 조회 (좀비 모드 + 키 이름 수정 완료)"""
     
-    max_retries = 5  # 재시도 횟수 증가
+    max_retries = 5  # 재시도 횟수
     
     for attempt in range(max_retries):
         # 1. 기본 대기 시간 (안전하게 1.1초)
@@ -70,14 +70,15 @@ def fetch_latest_bar(broker, ticker, name):
                     latest = data_list[0] 
                     current_dt = datetime.now().replace(minute=0, second=0, microsecond=0)
                     
+                    # 👇 [수정됨] 키 이름 변경 (stck_prpr -> stck_clpr / cntg_vol -> acml_vol)
                     return {
                         'symbol': ticker,
                         'record_time': current_dt,
                         'open': float(latest.get('stck_oprc', 0)),
                         'high': float(latest.get('stck_hgpr', 0)),
                         'low': float(latest.get('stck_lwpr', 0)),
-                        'close': float(latest.get('stck_prpr', 0)),
-                        'volume': int(latest.get('cntg_vol', 0))
+                        'close': float(latest.get('stck_clpr', 0)),  # 종가
+                        'volume': int(latest.get('acml_vol', 0))     # 누적 거래량
                     }
                 else:
                     return None 
@@ -103,7 +104,7 @@ def fetch_latest_bar(broker, ticker, name):
 def collect_data():
     """수집 메인 함수"""
     print(f"\n{'='*60}")
-    print(f"[{datetime.now()}] 1시간봉 수집 시작 (좀비 모드)")
+    print(f"[{datetime.now()}] 1시간봉 수집 시작 (키 수정됨)")
     print(f"{'='*60}\n")
     
     broker = get_broker()

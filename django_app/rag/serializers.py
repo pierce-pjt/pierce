@@ -1,20 +1,15 @@
-# rag/serializers.py
-
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from .models import (
     User, Post, Follow, Comment, PostLike,
-    # 👇 [변경] 새 주식 모델들로 교체
     Company, StockPrice, StockHolding, Transaction,
     HistoricalNews, LatestNews,
-    Comment, PostLike,
     WatchlistItem, StrategyNote,  
 )
 
 # ==========================================
-# 1. User (회원가입, 로그인, 조회) - [기존 코드 유지]
+# 1. User
 # ==========================================
-
 class UserReadSerializer(serializers.ModelSerializer):
     followers_count = serializers.IntegerField(read_only=True)
     following_count = serializers.IntegerField(read_only=True)
@@ -22,27 +17,20 @@ class UserReadSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = [
-            'id', 'nickname', 'profile_image_url', 
-            'followers_count', 'following_count', 'is_following'
-        ]
+        fields = ['id', 'nickname', 'profile_image_url', 'followers_count', 'following_count', 'is_following']
 
     def get_is_following(self, obj):
         request = self.context.get('request')
-        if not request:
-            return False
+        if not request: return False
         current_user_id = request.session.get('user_id')
-        if not current_user_id:
-            return False
+        if not current_user_id: return False
         return obj.followers.filter(follower_id=current_user_id).exists()
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("id", "nickname", "password", "profile_image_url")
-        extra_kwargs = {
-            "password": {"write_only": True, "min_length": 8},
-        }
+        extra_kwargs = {"password": {"write_only": True, "min_length": 8}}
 
     def create(self, validated_data):
         raw_password = validated_data.get("password")
@@ -59,14 +47,11 @@ class UserLoginSerializer(serializers.Serializer):
     nickname = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
-
 # ==========================================
-# 2. Feed & Community - [기존 코드 유지]
+# 2. Feed & Community
 # ==========================================
-
 class CommentSerializer(serializers.ModelSerializer):
     author = UserReadSerializer(read_only=True)
-
     class Meta:
         model = Comment
         fields = ("id", "post", "author", "content", "created_at")
@@ -83,25 +68,16 @@ class PostReadSerializer(serializers.ModelSerializer):
     comment_count = serializers.IntegerField(read_only=True)
     like_count = serializers.IntegerField(read_only=True)
     is_liked = serializers.SerializerMethodField()
-    # 댓글도 같이 보고 싶다면 아래 줄 주석 해제
-    # comments = CommentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Post
-        fields = (
-            "id", "title", "content", "author", "ticker",
-            "created_at", "updated_at",
-            "comment_count", "like_count", "is_liked",
-            # "comments"
-        )
+        fields = ("id", "title", "content", "author", "ticker", "created_at", "updated_at", "comment_count", "like_count", "is_liked")
 
     def get_is_liked(self, obj):
         request = self.context.get("request")
-        if not request:
-            return False
+        if not request: return False
         user_id = request.session.get("user_id")
-        if not user_id:
-            return False
+        if not user_id: return False
         return obj.likes.filter(user_id=user_id).exists()
 
 class FollowSerializer(serializers.ModelSerializer):
@@ -109,61 +85,47 @@ class FollowSerializer(serializers.ModelSerializer):
         model = Follow
         fields = '__all__'
 
-
 # ==========================================
-# 3. Stocks & Assets - [🚨 리모델링 반영]
+# 3. Stocks & Assets
 # ==========================================
-
-# (1) 종목 마스터 (Company)
 class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['code', 'name', 'market', 'is_active']
 
-# (2) 시세 데이터 (StockPrice) - 구 StockDailyPrice 대체
 class StockPriceSerializer(serializers.ModelSerializer):
-    # 회사 이름도 같이 보여주기 위해 추가
     company_name = serializers.ReadOnlyField(source='company.name')
-
     class Meta:
         model = StockPrice
-        # trade_date 대신 record_time 사용
+        # record_time으로 변경됨
         fields = ['company', 'company_name', 'record_time', 'open', 'high', 'low', 'close', 'volume']
 
-# (3) 보유 잔고 (StockHolding) - ticker 대신 company 객체 사용
 class StockHoldingSerializer(serializers.ModelSerializer):
     company_name = serializers.ReadOnlyField(source='company.name')
     company_code = serializers.ReadOnlyField(source='company.code')
-
     class Meta:
         model = StockHolding
         fields = ['company', 'company_code', 'company_name', 'quantity', 'average_price', 'updated_at']
 
-# (4) 거래 내역 (Transaction) - 구 TransactionHistory 대체
 class TransactionSerializer(serializers.ModelSerializer):
     company_name = serializers.ReadOnlyField(source='company.name')
-    
     class Meta:
         model = Transaction
         fields = ['id', 'user', 'company', 'company_name', 'type', 'price', 'quantity', 'amount', 'created_at']
         read_only_fields = ['user', 'amount', 'created_at']
 
-
 # ==========================================
-# 4. News & RAG - [기존 코드 유지]
+# 4. News & RAG & Etc
 # ==========================================
-
 class HistoricalNewsSerializer(serializers.ModelSerializer):
     distance = serializers.FloatField(read_only=True, required=False)
-    
     class Meta:
         model = HistoricalNews
         fields = '__all__'
         read_only_fields = ('body_embedding_vector',)
 
 class LatestNewsSerializer(serializers.ModelSerializer):
-    distance = serializers.FloatField(read_only=True, required=False) # 거리 계산 결과 필드 추가
-
+    distance = serializers.FloatField(read_only=True, required=False)
     class Meta:
         model = LatestNews
         fields = '__all__'
@@ -174,7 +136,6 @@ class WatchlistItemSerializer(serializers.ModelSerializer):
         model = WatchlistItem
         fields = "__all__"
         read_only_fields = ("id", "user", "created_at")
-
 
 class StrategyNoteSerializer(serializers.ModelSerializer):
     class Meta:
