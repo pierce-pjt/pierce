@@ -10,7 +10,10 @@ from django.db.models import Count, Sum
 from decimal import Decimal, InvalidOperation
 from pgvector.django import CosineDistance
 
+from datetime import timedelta
 import openai
+
+from .utils import get_embedding
 
 # 모델 및 시리얼라이저 Import
 from .models import (
@@ -445,38 +448,98 @@ class HistoricalNewsViewSet(viewsets.ModelViewSet):
 class LatestNewsViewSet(viewsets.ModelViewSet):
     queryset = LatestNews.objects.all()
     serializer_class = LatestNewsSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [AllowAny] # Airflow 접속 허용
 
+    # 🔎 검색 기능 (프론트엔드용)
+    def get_queryset(self):
+        queryset = LatestNews.objects.all()
+        search_query = self.request.query_params.get('search', None)
+        if search_query:
+            queryset = queryset.filter(
+                Q(title__icontains=search_query) | 
+                Q(body__icontains=search_query) |
+                Q(company_name__icontains=search_query)
+            )
+        return queryset.order_by('-news_collection_date')
+
+    # ⭐ [핵심] Airflow가 데이터를 보낼 때(POST), 자동으로 실행되는 함수
     def perform_create(self, serializer):
+        # 1. Airflow가 보낸 본문(body)을 꺼냄
         text = serializer.validated_data.get('body')
+        
+        # 2. 본문이 있으면 임베딩 벡터 생성
         if text:
-            vector = get_embedding(text)
+            vector = get_embedding(text) # OpenAI API 호출
             if vector:
+                # 3. 벡터를 포함해서 저장!
                 serializer.save(body_embedding_vector=vector)
+                print(f"✅ 신규 뉴스 임베딩 생성 완료: {serializer.validated_data.get('title')[:10]}...")
             else:
                 serializer.save()
         else:
             serializer.save()
 
-    @action(detail=True, methods=['get'], url_path='similar_latest')
-    def similar_latest_news(self, request, pk=None):
-        item = self.get_object()
-        if not item.body_embedding_vector:
-             return Response({"error": "벡터 없음"}, status=400)
-        results = LatestNews.objects.exclude(pk=pk).annotate(
-            distance=CosineDistance('body_embedding_vector', item.body_embedding_vector)
-        ).order_by('distance')[:5]
-        return Response(self.get_serializer(results, many=True).data)
-
     @action(detail=True, methods=['get'], url_path='similar_historical')
     def similar_historical_news(self, request, pk=None):
-        item = self.get_object()
-        if not item.body_embedding_vector:
-            return Response({"message": "분석 중"}, status=200)
-        results = HistoricalNews.objects.annotate(
-            distance=CosineDistance('body_embedding_vector', item.body_embedding_vector)
-        ).order_by('distance')[:3]
-        return Response(HistoricalNewsSerializer(results, many=True).data)
+        current_news = self.get_object()
+        
+        # 1. 벡터 체크
+        if current_news.body_embedding_vector is None:
+            return Response({"message": "분석 중 (임베딩 없음)"}, status=200)
+
+        # 2. 유사 뉴스 찾기 (Cosine Distance)
+        similar_news = HistoricalNews.objects.annotate(
+            distance=CosineDistance('body_embedding_vector', current_news.body_embedding_vector)
+        ).order_by('distance').first()
+
+        if not similar_news:
+            return Response({"message": "유사한 과거 데이터가 없습니다."}, status=200)
+
+        # 3. 티커 파싱 (TOP 3 추출)
+        raw_ticker = similar_news.impacted_ticker
+        target_tickers = []
+        
+        if raw_ticker:
+            # "005930|000660|051910" -> ["005930", "000660", "051910"]
+            split_tickers = raw_ticker.split("|")
+            # 빈 문자열 제거 및 공백 제거 후 상위 3개만 선택
+            target_tickers = [t.strip() for t in split_tickers if t.strip()][:3]
+
+        # 4. 각 종목별 데이터 조회 (Loop)
+        related_stocks_data = []
+        
+        # 차트 조회 기간 설정 (뉴스 발생일 기준 -5일 ~ +10일)
+        target_date = similar_news.news_collection_date
+        start_date = target_date - timedelta(days=5)
+        end_date = target_date + timedelta(days=10)
+
+        for code in target_tickers:
+            # 4-1. 종목명 찾기
+            company_obj = Company.objects.filter(code=code).first()
+            company_name = company_obj.name if company_obj else code # 없으면 코드 자체를 이름으로
+            
+            # 4-2. 차트 데이터 조회
+            stock_prices = StockPrice.objects.filter(
+                company__code=code,
+                record_time__range=(start_date, end_date)
+            ).order_by('record_time')
+            
+            # 4-3. 결과 리스트에 추가
+            related_stocks_data.append({
+                "name": company_name,
+                "ticker": code,
+                "chart_data": StockPriceSerializer(stock_prices, many=True).data
+            })
+
+        # 5. 응답 반환
+        similar_news_data = HistoricalNewsSerializer(similar_news).data
+        
+        return Response({
+            "similar_news": similar_news_data,
+            "similarity_score": 1 - similar_news.distance,
+            # 👇 기존 chart_data, company_name 대신 리스트 형태의 related_stocks 반환
+            "related_stocks": related_stocks_data 
+        })  
 
     @action(detail=False, methods=['post'])
     def search(self, request):

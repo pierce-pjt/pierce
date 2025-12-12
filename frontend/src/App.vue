@@ -11,7 +11,12 @@ import { RouterView } from 'vue-router'
 </template>
 
 <style>
-/* 👇 [필수] 앱 전체에 Noto Sans KR 폰트 강제 적용 */
+/* 👇 [핵심 수정] html뿐만 아니라 Vuetify의 메인 래퍼(wrapper)까지 스크롤바 공간 강제 확보 */
+html, body, .v-application, .v-application__wrap {
+  overflow-y: scroll !important; 
+}
+
+/* 폰트 및 배경 설정 */
 :root, body, .v-application {
   font-family: 'Noto Sans KR', sans-serif !important;
   background-color: #121212; /* 배경색 유지 */

@@ -99,7 +99,7 @@ def crawl_and_send_to_django(**context):
     target_date = now_kst.strftime("%Y-%m-%d")
     print(f"📅 수집 대상 날짜: {target_date}")
     
-    display = 10
+    display = 3
     start = 1
     total_success = 0
     total_fail = 0

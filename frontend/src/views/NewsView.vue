@@ -3,37 +3,39 @@ import { ref, onMounted, watch } from 'vue'
 import axios from 'axios'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
-import 'dayjs/locale/ko' // 한국어 설정
+import 'dayjs/locale/ko'
 
-// dayjs 플러그인 설정
 dayjs.extend(relativeTime)
 dayjs.locale('ko')
 
-// --- 1. 상태 관리 변수들 ---
-const newsItems = ref([])       // 실제 뉴스 데이터가 담길 곳
-const loading = ref(false)      // 로딩 중 표시용
-const searchQuery = ref('')     // 검색어
-const page = ref(1)             // 페이지네이션
+// --- 1. 상태 관리 ---
+const newsItems = ref([])       
+const loading = ref(false)      
+const searchQuery = ref('')     
+const page = ref(1)             
+const totalPages = ref(1)       
 const activeCategory = ref('통합뉴스')
 const activeTab = ref('최신뉴스')
 
-// 사이드바 메뉴 (UI용)
 const CATEGORIES = ['통합뉴스', '인기뉴스', '최신뉴스', '금융뉴스']
 
-// --- 2. API 통신 함수 (Django에서 데이터 가져오기) ---
+// --- 2. API 통신 ---
 const fetchNews = async () => {
   loading.value = true
+  // 페이지 넘길 때마다 스크롤 맨 위로 부드럽게 이동
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+  
   try {
-    // 🔹 Django API 호출 (localhost:8000)
-    // params: 검색어(search)를 쿼리스트링으로 보냄
     const response = await axios.get('http://localhost:8000/api/latest-news/', {
       params: {
-        search: searchQuery.value, 
+        search: searchQuery.value,
+        page: page.value, 
       }
     })
     
-    newsItems.value = response.data
-    console.log('뉴스 데이터 로드 성공:', newsItems.value)
+    newsItems.value = response.data.results 
+    const totalCount = response.data.count
+    totalPages.value = Math.ceil(totalCount / 20)
 
   } catch (error) {
     console.error('뉴스 불러오기 실패:', error)
@@ -42,37 +44,35 @@ const fetchNews = async () => {
   }
 }
 
-// --- 3. 이벤트 핸들러 및 유틸리티 ---
-
-// 초기 로딩 시 실행
+// --- 3. 이벤트 핸들러 ---
 onMounted(() => {
   fetchNews()
 })
 
-// 검색어가 바뀌면 실행 (엔터키용 함수)
+watch(page, () => {
+  fetchNews()
+})
+
 const onSearch = () => {
+  page.value = 1 
   fetchNews()
 }
 
-// 카테고리 선택 (UI용)
 const selectCategory = (cat) => {
   activeCategory.value = cat
 }
 
-// 날짜 포맷팅 (예: "3시간 전")
 const formatTime = (dateString) => {
   if (!dateString) return ''
   return dayjs(dateString).fromNow()
 }
 
-// 감성분석 색상 반환
 const getSentimentColor = (sentiment) => {
-  if (sentiment === 'positive') return 'green-accent-3' // 호재: 밝은 초록
-  if (sentiment === 'negative') return 'red-accent-2'   // 악재: 밝은 빨강
-  return 'grey'                                         // 중립: 회색
+  if (sentiment === 'positive') return 'green-accent-3'
+  if (sentiment === 'negative') return 'red-accent-2'
+  return 'grey'
 }
 
-// 감성분석 텍스트 반환
 const getSentimentText = (sentiment) => {
   if (sentiment === 'positive') return '호재'
   if (sentiment === 'negative') return '악재'
@@ -81,13 +81,12 @@ const getSentimentText = (sentiment) => {
 </script>
 
 <template>
-  <v-container class="py-8" style="max-width: 1280px;">
+  <v-container class="py-8 pb-16" style="max-width: 1280px;">
+    
     <v-row>
-      
       <v-col cols="12" md="3">
         <v-card class="custom-card pa-4" variant="outlined" rounded="xl">
           <h2 class="text-h6 font-weight-bold mb-4 ml-2 text-white">뉴스 분류</h2>
-          
           <v-list bg-color="transparent" class="pa-0">
             <v-list-item
               v-for="category in CATEGORIES"
@@ -146,10 +145,9 @@ const getSentimentText = (sentiment) => {
         <div v-else-if="newsItems.length === 0" class="text-center text-grey my-10">
           <v-icon icon="mdi-newspaper-remove" size="64" class="mb-4"></v-icon>
           <h3 class="text-h6">표시할 뉴스가 없습니다.</h3>
-          <p class="text-body-2 mt-2">검색어를 변경하거나 잠시 후 다시 시도해주세요.</p>
         </div>
 
-        <div v-else class="d-flex flex-column gap-4">
+        <div v-else class="d-flex flex-column gap-4 mb-16">
           <v-card
             v-for="news in newsItems"
             :key="news.id"
@@ -157,33 +155,19 @@ const getSentimentText = (sentiment) => {
             variant="outlined"
             rounded="xl"
             link
-            :href="news.url"
-            target="_blank"
+            @click="$router.push({ name: 'news-detail', params: { id: news.id } })"
           >
             <div class="d-flex pa-5">
-              
               <div class="thumbnail-box rounded-lg mr-5 d-flex align-center justify-center bg-grey-darken-4 overflow-hidden border-subtle">
-                <v-img
-                  v-if="news.image_url"
-                  :src="news.image_url"
-                  cover
-                  class="fill-height fill-width transition-swing"
-                ></v-img>
-                <v-icon 
-                  v-else 
-                  icon="mdi-newspaper-variant-outline" 
-                  color="grey-darken-1" 
-                  size="32"
-                ></v-icon>
+                <v-img v-if="news.image_url" :src="news.image_url" cover class="fill-height fill-width transition-swing"></v-img>
+                <v-icon v-else icon="mdi-newspaper-variant-outline" color="grey-darken-1" size="32"></v-icon>
               </div>
 
               <div class="flex-grow-1 d-flex flex-column justify-space-between">
-                
                 <div>
                   <h3 class="text-subtitle-1 font-weight-bold text-white mb-2 text-truncate-2 title-hover">
                     {{ news.title }}
                   </h3>
-
                   <div class="d-flex flex-wrap gap-2 mb-2">
                     <v-chip
                       v-if="news.company_name"
@@ -192,89 +176,86 @@ const getSentimentText = (sentiment) => {
                       variant="tonal"
                       label
                       class="font-weight-bold"
+                      style="max-width: 120px;" 
                     >
-                      {{ news.company_name }}
+                      <span class="text-truncate">
+                        {{ news.company_name }}
+                      </span>
                     </v-chip>
 
                     <v-chip 
-                      v-if="news.sentiment && news.sentiment !== 'neutral'"
+                      v-if="news.sentiment && news.sentiment !== 'neutral'" 
                       size="x-small" 
                       :color="getSentimentColor(news.sentiment)" 
                       variant="tonal" 
                       label 
-                      class="font-weight-bold"
+                      class="font-weight-bold" 
                       prepend-icon="mdi-chart-line"
                     >
                       {{ getSentimentText(news.sentiment) }}
                     </v-chip>
                   </div>
                 </div>
-
                 <div class="d-flex align-center text-caption text-grey">
-                  <span class="font-weight-medium text-grey-lighten-2">
-                    {{ news.source || '인터넷뉴스' }}
-                  </span>
+                  <span class="font-weight-medium text-grey-lighten-2">{{ news.source || '인터넷뉴스' }}</span>
                   <span class="mx-2">·</span>
                   <span>{{ formatTime(news.news_collection_date) }}</span>
                 </div>
-
               </div>
             </div>
           </v-card>
         </div>
 
-        <div class="mt-8 d-flex justify-center">
-          <v-pagination
-            v-model="page"
-            :length="5"
-            rounded="circle"
-            active-color="primary"
-            variant="flat"
-            size="small"
-          ></v-pagination>
-        </div>
-
       </v-col>
     </v-row>
+
+    <div class="fixed-bottom-pagination" v-if="newsItems.length > 0">
+      <div class="d-flex justify-center align-center h-100">
+        <v-pagination
+          v-model="page"
+          :length="totalPages" 
+          rounded="circle"
+          active-color="primary"
+          variant="flat"
+          size="small"
+        ></v-pagination>
+      </div>
+    </div>
+
   </v-container>
 </template>
 
 <style scoped>
-/* 다크모드 전용 딥 블랙 배경 */
+/* 스크롤바가 생겼다 없어지는 문제로 인한 레이아웃 흔들림 방지 */
+html {
+  overflow-y: scroll;
+}
+
+/* 기존 카드 스타일 등은 유지 */
 .custom-card {
-  background-color: #141414 !important; /* 리액트 디자인의 그 색상 */
+  background-color: #141414 !important;
   border-color: #333 !important;
   transition: all 0.2s ease-in-out;
 }
-
-/* 호버 시 테두리와 그림자 효과 */
 .custom-card:hover {
   border-color: #555 !important;
   transform: translateY(-2px);
   box-shadow: 0 4px 20px rgba(0,0,0,0.5);
 }
-
-/* 활성화된 카테고리 */
 .active-category {
   background-color: #2a2a2a !important;
 }
-
-/* 검색창 테두리 커스텀 */
 .custom-input :deep(.v-field__outline__start),
 .custom-input :deep(.v-field__outline__end),
 .custom-input :deep(.v-field__outline__notch) {
   border-color: #333 !important;
 }
-
-/* 썸네일 박스 스타일 */
 .thumbnail-box {
-  width: 110px;    /* 크기 약간 키움 */
+  width: 110px;
   height: 110px;
   flex-shrink: 0;
-  border: 1px solid #333; /* 미세한 테두리 */
+  border: 1px solid #333;
 }
-
-/* 텍스트 말줄임 (2줄) */
 .text-truncate-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -282,20 +263,71 @@ const getSentimentText = (sentiment) => {
   overflow: hidden;
   line-height: 1.5;
 }
-
-/* 제목 호버 효과 */
 .news-item-card:hover .title-hover {
   text-decoration: underline;
   text-decoration-color: #666;
   text-underline-offset: 4px;
 }
-
-/* 간격 유틸리티 */
 .gap-2 { gap: 8px; }
 .gap-4 { gap: 16px; }
-
-/* 미세 테두리 */
 .border-subtle {
   border: 1px solid rgba(255,255,255,0.1);
 }
+.mb-16 {
+  margin-bottom: 64px !important;
+}
+
+.v-container {
+  min-height: 101vh !important;
+}
+
+/* --------------------- */
+/*  흔들림 방지 핵심 부분 */
+/* --------------------- */
+.fixed-bottom-pagination {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+
+  /* 100% → 100vw 변경하여 width 변동으로 인한 흔들림 제거 */
+  width: 100vw !important;
+
+  height: 80px;
+  background-color: rgba(18, 18, 18, 0.95);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid #333;
+  z-index: 1000;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
+}
+</style>
+
+<style>
+/* 스크롤바 영역을 항상 예약하여 컨텐츠 길이에 따른 흔들림 방지 */
+html {
+  overflow-y: scroll; /* 또는 scrollbar-gutter: stable; (최신 브라우저) */
+}
+</style>
+
+<style scoped>
+/* 기존 스타일 유지... */
+
+.fixed-bottom-pagination {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  
+  /* [수정] 100vw는 스크롤바를 무시하므로 100%로 변경 */
+  width: 100% !important; 
+  /* 혹시 모를 padding/margin 간섭 방지를 위해 width 대신 아래처럼 써도 됩니다 */
+  /* left: 0; right: 0; width: auto; */
+
+  height: 80px;
+  background-color: rgba(18, 18, 18, 0.95);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid #333;
+  z-index: 1000;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
+}
+
+/* ...나머지 스타일 */
 </style>
