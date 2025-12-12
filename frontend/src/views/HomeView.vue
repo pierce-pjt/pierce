@@ -1,123 +1,167 @@
 <!-- frontend/src/views/HomeView.vue -->
 <script setup>
-const marketSummary = [
-  {
-    label: '코스피',
-    value: '2,645.57',
-    diff: '+1.2%',
-  },
-  {
-    label: '코스닥',
-    value: '878.45',
-    diff: '+0.8%',
-  },
-  {
-    label: '환율 (USD)',
-    value: '1,324.50',
-    diff: '-0.3%',
-  },
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+// 💡 여기서는 "어떤 종목을 보여줄지"만 프론트에서 관리하고
+// 실제 가격/등락률/거래량/차트 데이터는 전부 백엔드에서 가져온다.
+const TICKERS = [
+  { code: '005930', name: '삼성전자' },
+  { code: '000660', name: 'SK하이닉스' },
+  { code: '373220', name: 'LG에너지솔루션' },
+  { code: '035720', name: '카카오' },
+  { code: '035420', name: 'NAVER' },
+  { code: '005380', name: '현대차' },
+  { code: '068270', name: '셀트리온' },
+  { code: '000270', name: '기아' },
 ]
 
-const popularStocks = [
-  {
-    rank: 1,
-    name: '삼성전자',
-    code: '005930',
-    price: '71,800',
-    change: '+2.3%',
-    changeAbs: '+1,600',
-    volume: '15.2M',
-    trend: 'up',
-  },
-  {
-    rank: 2,
-    name: 'SK하이닉스',
-    code: '000660',
-    price: '142,500',
-    change: '-5.7%',
-    changeAbs: '-7,700',
-    volume: '8.3M',
-    trend: 'down',
-  },
-  {
-    rank: 3,
-    name: 'LG에너지솔루션',
-    code: '373220',
-    price: '385,000',
-    change: '+1.2%',
-    changeAbs: '+4,700',
-    volume: '3.1M',
-    trend: 'up',
-  },
-  {
-    rank: 4,
-    name: '카카오',
-    code: '035720',
-    price: '45,600',
-    change: '+3.4%',
-    changeAbs: '+1,600',
-    volume: '12.5M',
-    trend: 'up',
-  },
-  {
-    rank: 5,
-    name: 'NAVER',
-    code: '035420',
-    price: '198,500',
-    change: '-1.8%',
-    changeAbs: '-3,500',
-    volume: '5.7M',
-    trend: 'down',
-  },
-]
+const stocks = ref([])        // 백엔드에서 받아온 실시간 종목 데이터
+const loading = ref(false)
+const errorMessage = ref('')
+
+// 백엔드 API 기본 주소 (리버스프록시/Nginx 쓰면 '/api' 만 남겨도 됨)
+const API_BASE = '/api'
+
+const goStockDetail = (stock) => {
+  router.push(`/stock/${stock.code}`)
+}
+
+const getChartPoints = (data) => {
+  if (!data || data.length < 2) return ''
+
+  const max = Math.max(...data)
+  const min = Math.min(...data)
+  const range = max - min || 1
+
+  return data
+    .map((value, index) => {
+      const x = (index / (data.length - 1)) * 80
+      const y = 40 - ((value - min) / range) * 40
+      return `${x},${y}`
+    })
+    .join(' ')
+}
+
+// 🔌 백엔드에서 요약 + 차트 데이터 불러오기
+const fetchStocks = async () => {
+  loading.value = true
+  errorMessage.value = ''
+  const results = []
+
+  try {
+    // 각 티커별로 summary + chart 2개의 엔드포인트를 호출한다.
+    for (const item of TICKERS) {
+      const code = item.code
+
+      // 1) 요약 정보 (/api/stock-prices/summary/?ticker=005930)
+      const summaryRes = await fetch(
+        `${API_BASE}/stock-prices/summary/?ticker=${code}`,
+      )
+
+      if (!summaryRes.ok) {
+        // 데이터 없는 종목은 그냥 건너뜀
+        continue
+      }
+
+      const summary = await summaryRes.json()
+
+      // 2) 최근 7일 차트 (/api/stock-prices/chart/?ticker=005930&days=7)
+      const chartRes = await fetch(
+        `${API_BASE}/stock-prices/chart/?ticker=${code}&days=7`,
+      )
+      let chartData = []
+      if (chartRes.ok) {
+        const chartJson = await chartRes.json()
+        // close 가격만 꺼내서 간단한 라인차트용 데이터로 사용
+        chartData = chartJson.map((row) => Number(row.close))
+      }
+
+      results.push({
+        name: item.name,
+        code,
+        // 백엔드 summary View에서 내려주는 필드 이름에 맞춰서 사용
+        price: summary.last_price ?? 0,
+        change: summary.change_rate ?? 0,
+        changeAmount: summary.change ?? 0,
+        volume: summary.volume ?? 0,
+        chartData,
+      })
+    }
+
+    // 거래량 기준 내림차순 정렬 후 순위 부여
+    results.sort((a, b) => Number(b.volume) - Number(a.volume))
+    stocks.value = results.map((s, idx) => ({
+      id: idx + 1,
+      rank: idx + 1,
+      ...s,
+    }))
+  } catch (err) {
+    console.error(err)
+    errorMessage.value = '실시간 종목 데이터를 불러오는 중 오류가 발생했습니다.'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  fetchStocks()
+})
 </script>
 
 <template>
-  <div class="home">
-    <!-- 상단 마켓 요약 카드 -->
-    <section class="hero">
-      <div class="hero-bg"></div>
-      <div class="hero-content">
-        <div class="hero-title-block">
-          <p class="hero-subtitle">오늘의 국내 시장 한눈에 보기</p>
-          <h1 class="hero-title">
-            AI와 함께 하는<br />
-            나만의 주식 코치
-          </h1>
-          <p class="hero-desc">
-            뉴스·커뮤니티·내 포트폴리오를 한 번에 분석해서<br />
-            초보 투자자도 쉽게 따라올 수 있는 인사이트를 제공합니다.
-          </p>
+  <div class="home-page">
+    <!-- 🔹 상단 3개 마켓 카드 (지금은 임시 정적인 값, 나중에 원하면 이것도 API 연결 가능) -->
+    <section class="market-grid">
+      <div class="market-card">
+        <div class="market-label">코스피</div>
+        <div class="market-row">
+          <div class="market-value">2,645.57</div>
+          <div class="market-change market-change-up">
+            <span class="arrow">▲</span>
+            <span class="market-change-text">+1.2%</span>
+          </div>
         </div>
+      </div>
 
-        <div class="hero-cards">
-          <div
-            v-for="card in marketSummary"
-            :key="card.label"
-            class="hero-card"
-          >
-            <p class="card-label">{{ card.label }}</p>
-            <p class="card-value">{{ card.value }}</p>
-            <p
-              class="card-diff"
-              :class="{ positive: card.diff.startsWith('+'), negative: card.diff.startsWith('-') }"
-            >
-              {{ card.diff }}
-            </p>
+      <div class="market-card">
+        <div class="market-label">코스닥</div>
+        <div class="market-row">
+          <div class="market-value">878.45</div>
+          <div class="market-change market-change-up">
+            <span class="arrow">▲</span>
+            <span class="market-change-text">+0.8%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="market-card">
+        <div class="market-label">환율 (USD)</div>
+        <div class="market-row">
+          <div class="market-value">1,324.50</div>
+          <div class="market-change market-change-down">
+            <span class="arrow">▼</span>
+            <span class="market-change-text">-0.3%</span>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 인기 종목 테이블 -->
-    <section class="section">
-      <div class="section-header">
-        <h2 class="section-title">실시간 인기 종목</h2>
-        <p class="section-subtitle">투자자들이 많이 보고 있는 종목을 확인해보세요.</p>
+    <!-- 🔹 에러 메시지 -->
+    <p v-if="errorMessage" class="error-text">
+      {{ errorMessage }}
+    </p>
+
+    <!-- 🔹 인기 종목 테이블 -->
+    <section class="stocks-card">
+      <div class="stocks-header">
+        <h2>실시간 인기 종목</h2>
       </div>
 
-      <div class="table-card">
-        <table class="stock-table">
+      <div class="stocks-table-wrapper">
+        <table class="stocks-table">
           <thead>
             <tr>
               <th class="col-rank">순위</th>
@@ -126,47 +170,89 @@ const popularStocks = [
               <th class="col-change">전일대비</th>
               <th class="col-volume">거래량</th>
               <th class="col-chart">차트</th>
+              <th class="col-star"></th>
             </tr>
           </thead>
           <tbody>
+            <!-- 로딩 중일 때 -->
+            <tr v-if="loading">
+              <td colspan="7" class="loading-cell">
+                실시간 종목 데이터를 불러오는 중입니다...
+              </td>
+            </tr>
+
+            <!-- 데이터가 없을 때 -->
+            <tr v-else-if="!stocks.length">
+              <td colspan="7" class="loading-cell">
+                표시할 종목 데이터가 없습니다.
+              </td>
+            </tr>
+
+            <!-- 실제 데이터 -->
             <tr
-              v-for="stock in popularStocks"
-              :key="stock.rank"
+              v-else
+              v-for="stock in stocks"
+              :key="stock.id"
+              class="stock-row"
+              @click="goStockDetail(stock)"
             >
               <td class="col-rank">
-                <span class="rank-badge">{{ stock.rank }}</span>
+                <span class="rank-text">{{ stock.rank }}</span>
               </td>
+
               <td class="col-name">
-                <div class="name-wrapper">
-                  <span class="name">{{ stock.name }}</span>
-                  <span class="code">{{ stock.code }}</span>
+                <div class="name-block">
+                  <div class="name-main">{{ stock.name }}</div>
+                  <div class="name-code">{{ stock.code }}</div>
                 </div>
               </td>
+
               <td class="col-price">
-                {{ stock.price }}
+                {{ Number(stock.price).toLocaleString() }}
               </td>
+
               <td class="col-change">
                 <div
-                  class="change-chip"
+                  class="change-block"
                   :class="{
-                    up: stock.change.startsWith('+'),
-                    down: stock.change.startsWith('-'),
+                    up: stock.change >= 0,
+                    down: stock.change < 0,
                   }"
                 >
-                  <span class="change-main">{{ stock.change }}</span>
-                  <span class="change-abs">{{ stock.changeAbs }}</span>
+                  <div class="change-main">
+                    <span class="arrow-icon">
+                      {{ stock.change >= 0 ? '▲' : '▼' }}
+                    </span>
+                    <span>{{ Math.abs(Number(stock.change)).toFixed(2) }}%</span>
+                  </div>
+                  <div class="change-amount">
+                    {{ stock.change >= 0 ? '+' : '' }}
+                    {{ Number(stock.changeAmount).toLocaleString() }}
+                  </div>
                 </div>
               </td>
+
               <td class="col-volume">
-                {{ stock.volume }}
+                {{ Number(stock.volume).toLocaleString() }}
               </td>
+
               <td class="col-chart">
-                <div
-                  class="mini-chart"
-                  :class="stock.trend"
-                >
-                  <span class="line"></span>
-                </div>
+                <svg width="80" height="40" class="mini-chart">
+                  <polyline
+                    :points="getChartPoints(stock.chartData)"
+                    fill="none"
+                    :class="[
+                      'mini-chart-line',
+                      stock.change >= 0 ? 'mini-chart-line-up' : 'mini-chart-line-down',
+                    ]"
+                  />
+                </svg>
+              </td>
+
+              <td class="col-star" @click.stop>
+                <button class="star-btn" type="button">
+                  ★
+                </button>
               </td>
             </tr>
           </tbody>
@@ -177,305 +263,266 @@ const popularStocks = [
 </template>
 
 <style scoped>
-.home {
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
+.home-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px 20px 40px;
+  color: #f5f5f7;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* 상단 메인 카드 */
-.hero {
-  position: relative;
-  border-radius: 24px;
-  overflow: hidden;
-  padding: 24px 24px 20px;
-  background: radial-gradient(circle at 0% 0%, #3b82f6 0, transparent 55%),
-    radial-gradient(circle at 100% 0%, #a855f7 0, transparent 55%),
-    radial-gradient(circle at 50% 100%, #22c55e 0, transparent 55%),
-    #0b1020;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
-}
-
-.hero-bg {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 0 0, rgba(255, 255, 255, 0.08) 0, transparent 55%);
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.hero-content {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  gap: 32px;
-}
-
-.hero-title-block {
-  max-width: 360px;
-}
-
-.hero-subtitle {
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  opacity: 0.8;
-  margin-bottom: 6px;
-}
-
-.hero-title {
-  font-size: 24px;
-  line-height: 1.4;
-  font-weight: 800;
-  margin: 0 0 10px;
-}
-
-.hero-desc {
+/* 에러 텍스트 */
+.error-text {
+  margin-bottom: 12px;
   font-size: 13px;
-  line-height: 1.5;
-  color: #e5e7eb;
-  opacity: 0.9;
-}
-
-.hero-cards {
-  display: flex;
-  gap: 14px;
-  align-items: stretch;
-  min-width: 0;
-}
-
-.hero-card {
-  flex: 1;
-  padding: 14px 14px 12px;
-  border-radius: 16px;
-  background: rgba(15, 23, 42, 0.86);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.7);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.card-label {
-  font-size: 12px;
-  color: #9ca3af;
-}
-
-.card-value {
-  font-size: 20px;
-  font-weight: 700;
-}
-
-.card-diff {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.card-diff.positive {
-  color: #22c55e;
-}
-
-.card-diff.negative {
   color: #f97373;
 }
 
-/* 섹션 */
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+/* ----- 상단 마켓 카드 ----- */
+
+.market-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
 }
 
-.section-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.market-card {
+  background: #141414;
+  border-radius: 16px;
+  padding: 18px 20px;
+  border: 1px solid #1f2937;
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.6);
 }
 
-.section-title {
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.section-subtitle {
+.market-label {
   font-size: 13px;
   color: #9ca3af;
+  margin-bottom: 6px;
 }
 
-/* 테이블 카드 */
-.table-card {
+.market-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.market-value {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.market-change {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.market-change-up {
+  color: #ef4444;
+}
+
+.market-change-down {
+  color: #3b82f6;
+}
+
+.arrow {
+  font-size: 11px;
+}
+
+.market-change-text {
+  margin-top: 1px;
+}
+
+/* ----- 인기 종목 카드/테이블 ----- */
+
+.stocks-card {
+  background: #141414;
   border-radius: 18px;
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.75);
+  border: 1px solid #1f2937;
   overflow: hidden;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.75);
 }
 
-.stock-table {
+.stocks-header {
+  padding: 14px 24px;
+  border-bottom: 1px solid #1f2937;
+}
+
+.stocks-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.stocks-table-wrapper {
+  overflow-x: auto;
+}
+
+.stocks-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }
 
-.stock-table thead {
-  background: rgba(15, 23, 42, 0.96);
+.stocks-table thead {
+  background: #0a0a0a;
 }
 
-.stock-table th,
-.stock-table td {
-  padding: 10px 14px;
+.stocks-table th,
+.stocks-table td {
+  padding: 10px 18px;
   text-align: left;
 }
 
-.stock-table th {
-  font-weight: 600;
+.stocks-table th {
   color: #9ca3af;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.3);
+  font-weight: 500;
 }
 
-.stock-table tbody tr:nth-child(even) {
-  background: rgba(15, 23, 42, 0.88);
-}
-
-.stock-table tbody tr:hover {
-  background: rgba(30, 64, 175, 0.4);
-}
-
-/* 컬럼 너비 */
-.col-rank {
-  width: 60px;
-}
-
-.col-name {
-  width: 220px;
-}
-
-.col-price {
-  width: 120px;
-}
-
-.col-change {
-  width: 160px;
-}
-
+.col-price,
+.col-change,
 .col-volume {
-  width: 120px;
+  text-align: right;
 }
 
 .col-chart {
-  width: 120px;
+  text-align: center;
 }
 
-/* 각 셀 요소 */
-.rank-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.6);
-  font-size: 12px;
+.col-star {
+  width: 60px;
+  text-align: center;
 }
 
-.name-wrapper {
+/* 순위, 이름 */
+
+.rank-text {
+  color: #9ca3af;
+}
+
+.name-block {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.name {
-  font-weight: 600;
+.name-main {
+  font-weight: 500;
 }
 
-.code {
+.name-code {
   font-size: 11px;
-  color: #9ca3af;
+  color: #6b7280;
 }
 
-.col-price {
-  font-weight: 600;
-}
+/* 변화율 */
 
-.change-chip {
+.change-block {
   display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 13px;
+}
+
+.change-block.up {
+  color: #ef4444;
+}
+
+.change-block.down {
+  color: #3b82f6;
+}
+
+.change-main {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  background: rgba(15, 23, 42, 0.9);
+  gap: 4px;
 }
 
-.change-chip.up {
-  color: #4ade80;
-}
-
-.change-chip.down {
-  color: #f97373;
-}
-
-.change-abs {
+.change-amount {
   font-size: 11px;
+  margin-top: 2px;
+  opacity: 0.9;
+}
+
+.arrow-icon {
+  font-size: 10px;
+}
+
+/* 미니 차트 */
+
+.mini-chart {
   opacity: 0.85;
 }
 
-/* 미니 차트 (간단한 비주얼용) */
-.mini-chart {
-  height: 26px;
-  border-radius: 999px;
-  background: radial-gradient(circle at 0 100%, rgba(148, 163, 184, 0.4), transparent 55%);
-  position: relative;
-  overflow: hidden;
+.mini-chart-line {
+  stroke-width: 2;
 }
 
-.mini-chart .line {
-  position: absolute;
-  inset: 5px 6px;
-  border-radius: 999px;
-  border-width: 2px;
-  border-style: solid;
-  border-color: transparent;
+.mini-chart-line-up {
+  stroke: #ef4444;
 }
 
-.mini-chart.up .line {
-  border-image: linear-gradient(90deg, #22c55e, #4ade80) 1;
+.mini-chart-line-down {
+  stroke: #3b82f6;
 }
 
-.mini-chart.down .line {
-  border-image: linear-gradient(90deg, #f97373, #fb923c) 1;
+/* 즐겨찾기 스타 */
+
+.star-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.05s ease;
+}
+
+.star-btn:hover {
+  background: #1f2937;
+  color: #facc15;
+  transform: translateY(-1px);
+}
+
+.star-btn:active {
+  transform: translateY(0);
+}
+
+/* 행 hover 효과 */
+
+.stock-row {
+  border-top: 1px solid #1f2937;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.stock-row:hover {
+  background: #1a1a1a;
+}
+
+/* 로딩/빈 상태 셀 */
+
+.loading-cell {
+  padding: 20px;
+  text-align: center;
+  color: #9ca3af;
 }
 
 /* 반응형 */
-@media (max-width: 900px) {
-  .hero-content {
-    flex-direction: column;
-  }
 
-  .hero-cards {
-    width: 100%;
+@media (max-width: 900px) {
+  .market-grid {
+    grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 640px) {
-  .hero {
-    padding: 18px 16px;
-  }
-
-  .hero-title {
-    font-size: 20px;
-  }
-
-  .section-title {
-    font-size: 16px;
-  }
-
-  .stock-table th:nth-child(5),
-  .stock-table td:nth-child(5),
-  .stock-table th:nth-child(6),
-  .stock-table td:nth-child(6) {
+  .stocks-table th:nth-child(6),
+  .stocks-table td:nth-child(6) {
     display: none;
   }
 }

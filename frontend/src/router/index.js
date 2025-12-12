@@ -1,4 +1,4 @@
-// frontend/src/router/index.js
+// src/router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
 
@@ -11,7 +11,7 @@ const routes = [
   {
     path: '/news',
     name: 'news',
-    // 나중에 만들 예정
+    // 💡 lazy-loaded: 방문할 때 로드됨
     component: () => import('../views/NewsView.vue'),
   },
   {
@@ -24,10 +24,22 @@ const routes = [
     name: 'mypage',
     component: () => import('../views/MyPageView.vue'),
   },
+  // 👇 로그인 및 회원가입 라우트 추가
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('../views/LoginView.vue'),
+  },
+  {
+    path: '/signup',
+    name: 'signup',
+    component: () => import('../views/SignupView.vue'),
+  },
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  // Vite 환경 변수 사용 (배포 시 경로 문제 방지)
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
 })
 

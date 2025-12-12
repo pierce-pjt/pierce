@@ -30,18 +30,12 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("id", "nickname", "password", "profile_image_url")
-        extra_kwargs = {"password": {"write_only": True, "min_length": 8}}
+        extra_kwargs = {"password": {"write_only": True, "min_length": 4}}
 
     def create(self, validated_data):
         raw_password = validated_data.get("password")
         validated_data["password"] = make_password(raw_password)
         return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        password = validated_data.get("password", None)
-        if password:
-            validated_data["password"] = make_password(password)
-        return super().update(instance, validated_data)
 
 class UserLoginSerializer(serializers.Serializer):
     nickname = serializers.CharField()
@@ -97,7 +91,7 @@ class StockPriceSerializer(serializers.ModelSerializer):
     company_name = serializers.ReadOnlyField(source='company.name')
     class Meta:
         model = StockPrice
-        # record_time으로 변경됨
+        # record_time 필드 사용 확인
         fields = ['company', 'company_name', 'record_time', 'open', 'high', 'low', 'close', 'volume']
 
 class StockHoldingSerializer(serializers.ModelSerializer):

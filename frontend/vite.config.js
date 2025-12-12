@@ -15,4 +15,18 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+  server: {
+    host: '0.0.0.0', // 도커 밖에서 접속 허용
+    port: 5173,
+    watch: {
+      usePolling: true, // 윈도우/도커 파일 변경 감지(핫 리로딩) 활성화
+    },
+    // 👇👇👇 여기가 핵심 수정 사항입니다!
+    proxy: {
+      '/api': {
+        target: 'http://django:8000', 
+        changeOrigin: true,
+      }
+    }
+  }
 })

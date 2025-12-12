@@ -126,7 +126,6 @@ class UserViewSet(viewsets.ModelViewSet):
         user = get_current_user(request)
         return Response(UserReadSerializer(user).data)
 
-    # --- [수정] url_path 추가하여 /api/users/me/portfolio-summary/ 경로 생성 ---
     @action(detail=False, methods=["get"], url_path="me/portfolio-summary")
     def portfolio_summary(self, request):
         user = get_current_user(request)
@@ -142,10 +141,8 @@ class UserViewSet(viewsets.ModelViewSet):
                 "holdings_count": 0,
             })
 
-        # 보유 종목들의 최신가 조회
         company_codes = [h.company_id for h in holdings]
-        
-        # Postgres Distinct 활용하여 각 종목별 최신 record_time 데이터 1개씩만 가져오기
+        # record_time 기준 최신 데이터 조회
         latest_prices = StockPrice.objects.filter(
             company_id__in=company_codes
         ).order_by('company', '-record_time').distinct('company')
@@ -158,8 +155,6 @@ class UserViewSet(viewsets.ModelViewSet):
         for h in holdings:
             invested = h.average_price * h.quantity
             total_invested += invested
-            
-            # 현재가 없으면 평단가로 계산
             current_price = price_map.get(h.company_id, h.average_price)
             total_eval += current_price * h.quantity
 
@@ -177,7 +172,6 @@ class UserViewSet(viewsets.ModelViewSet):
             "holdings_count": holdings.count(),
         })
 
-    # --- [수정] url_path 추가 ---
     @action(detail=False, methods=["get"], url_path="me/holdings")
     def holdings(self, request):
         user = get_current_user(request)
@@ -199,7 +193,7 @@ class UserViewSet(viewsets.ModelViewSet):
             return_rate = (profit / invested_amount * 100) if invested_amount > 0 else 0.0
 
             result.append({
-                "ticker": h.company_id, # 프론트 호환성을 위해 company_id를 ticker 키에 담음
+                "ticker": h.company_id,
                 "company_name": h.company.name,
                 "quantity": h.quantity,
                 "average_buy_price": float(h.average_price),
@@ -212,11 +206,9 @@ class UserViewSet(viewsets.ModelViewSet):
             })
         return Response(result)
 
-    # --- [수정] url_path 추가 ---
     @action(detail=False, methods=["get"], url_path="me/transactions")
     def transactions(self, request):
         user = get_current_user(request)
-        # TransactionHistory -> Transaction 모델 사용
         qs = Transaction.objects.filter(user=user).select_related('company').order_by("-created_at")
         limit = request.query_params.get("limit")
         if limit:
@@ -235,7 +227,6 @@ class UserViewSet(viewsets.ModelViewSet):
             })
         return Response(data)
 
-    # --- [수정] url_path 추가 ---
     @action(detail=False, methods=["get"], url_path="me/posts")
     def posts(self, request):
         user = get_current_user(request)
@@ -251,7 +242,6 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer = PostReadSerializer(posts, many=True, context={"request": request})
         return Response(serializer.data)
 
-    # --- [수정] url_path 추가 ---
     @action(detail=False, methods=["get"], url_path="me/liked-posts")
     def liked_posts(self, request):
         user = get_current_user(request)
@@ -268,14 +258,12 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer = PostReadSerializer(posts, many=True, context={"request": request})
         return Response(serializer.data)
 
-    # --- [수정] url_path 추가 ---
     @action(detail=False, methods=["get"], url_path="me/followers")
     def followers(self, request, pk=None):
         user = get_current_user(request)
         users = [r.follower for r in user.followers.select_related('follower')]
         return Response(UserReadSerializer(users, many=True).data)
 
-    # --- [수정] url_path 추가 ---
     @action(detail=False, methods=["get"], url_path="me/following")
     def following(self, request, pk=None):
         user = get_current_user(request)
@@ -371,18 +359,62 @@ class CompanyViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['code', 'name']
 
 class StockPriceViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = StockPrice.objects.all().order_by('record_time')
+    # 기본 쿼리셋 (record_time 역순)
+    queryset = StockPrice.objects.all().order_by('-record_time')
     serializer_class = StockPriceSerializer
     
-    def get_queryset(self):
-        qs = super().get_queryset()
-        code = self.request.query_params.get('code')
-        if code:
-            qs = qs.filter(company_id=code)
-        return qs
+    # 💥💥💥 [핵심 수정] summary, chart 액션 추가 💥💥💥
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        ticker = request.query_params.get('ticker')
+        if not ticker:
+            return Response({"error": "Ticker is required"}, status=400)
+
+        # company_id(=symbol)로 필터링, 최신 날짜순 2개
+        prices = StockPrice.objects.filter(company_id=ticker).order_by('-record_time')[:2]
+
+        if not prices.exists():
+            return Response({"error": "No data found"}, status=404)
+
+        latest = prices[0]
+        prev = prices[1] if len(prices) > 1 else None
+
+        change = 0
+        change_rate = 0
+        if prev:
+            change = latest.close - prev.close
+            if prev.close > 0:
+                change_rate = (change / prev.close) * 100
+
+        data = {
+            "name": latest.company.name if latest.company else ticker,
+            "code": latest.company_id,
+            "last_price": latest.close,
+            "volume": latest.volume,
+            "change": change,
+            "change_rate": round(change_rate, 2),
+        }
+        return Response(data)
+
+    @action(detail=False, methods=['get'])
+    def chart(self, request):
+        ticker = request.query_params.get('ticker')
+        days = int(request.query_params.get('days', 30))
+        
+        # 최신 n일치 데이터
+        data = StockPrice.objects.filter(company_id=ticker).order_by('-record_time')[:days]
+        
+        # 차트용 오름차순 정렬
+        results = [
+            {
+                "date": d.record_time.strftime("%Y-%m-%d"),
+                "close": d.close
+            } 
+            for d in reversed(data)
+        ]
+        return Response(results)
 
 class StockHoldingViewSet(viewsets.ModelViewSet):
-    # 👇 [필수] 라우터 Basename 에러 방지용
     queryset = StockHolding.objects.all()
     serializer_class = StockHoldingSerializer
     
@@ -396,7 +428,6 @@ class StockHoldingViewSet(viewsets.ModelViewSet):
         serializer.save(user=user)
 
 class TransactionViewSet(viewsets.ModelViewSet):
-    # 👇 [필수] 라우터 Basename 에러 방지용
     queryset = Transaction.objects.all()
     serializer_class = TransactionSerializer
 
