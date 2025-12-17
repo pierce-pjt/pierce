@@ -53,7 +53,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <main class="main-area">
+    <main :class="route.name === 'landing' ? 'main-full' : 'main-area'">
       <RouterView />
     </main>
   </div>
@@ -61,18 +61,28 @@ onMounted(() => {
 
 <style scoped>
 .app { min-height: 100vh; background: #050711; color: #f5f5f7; font-family: system-ui, sans-serif; }
+
+/* 네비게이션 바 */
 .nav-bar { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(14px); background: rgba(5,7,17,0.8); border-bottom: 1px solid rgba(255,255,255,0.05); }
 .nav-inner { max-width: 1120px; margin: 0 auto; padding: 0 20px; height: 64px; display: flex; align-items: center; justify-content: space-between; }
 .logo-image { height: 32px; display: block; }
+
+/* 메뉴 */
 .nav-menu { display: flex; gap: 24px; font-weight: 500; font-size: 15px; }
 .nav-item { color: #9ca3af; text-decoration: none; padding: 6px 0; position: relative; }
 .nav-item:hover, .nav-item.active { color: #fff; }
 .nav-item.active::after { content: ''; position: absolute; bottom: -21px; left: -4px; right: -4px; height: 2px; background: #3b82f6; }
 
+/* 로그인 버튼 */
 .login-btn { background: #2563eb; color: white; border: none; padding: 7px 18px; border-radius: 99px; font-weight: 600; cursor: pointer; }
 .user-profile { display: flex; align-items: center; gap: 10px; }
 .user-avatar { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #3b82f6; }
 .user-name { font-weight: 600; font-size: 14px; }
 .logout-link { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 13px; }
+
+/* 👇 기존 스타일 (여백 있음) */
 .main-area { max-width: 1120px; margin: 0 auto; padding: 32px 20px 60px; }
+
+/* 👇 추가된 스타일 (여백 없음, 전체 너비) */
+.main-full { width: 100%; padding: 0; margin: 0; }
 </style>

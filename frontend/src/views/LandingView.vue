@@ -1,5 +1,8 @@
 <script setup>
 import { useRouter } from 'vue-router'
+//image import
+import dataAnalysisImg from '@/assets/data_image.jpeg'
+import communityImg from '@/assets/community_image.png'
 
 const router = useRouter()
 
@@ -28,7 +31,9 @@ const goDashboard = () => {
 
     <section class="section feature">
       <div class="feature-card">
-        <div class="card-image-placeholder">📊 Chart Analysis</div>
+        <div class="card-image-wrapper">
+          <img :src="dataAnalysisImg" alt="데이터 기반 주식 분석" class="card-image" />
+        </div>
         <div class="card-text">
           <h2>데이터 기반 주식 추천</h2>
           <p>과거 데이터를 분석하여<br />합리적인 투자 지표를 제공합니다.</p>
@@ -42,7 +47,9 @@ const goDashboard = () => {
           <h2>커뮤니티와 함께 성장</h2>
           <p>혼자 고민하지 마세요.<br />다양한 투자자들과 인사이트를 나누세요.</p>
         </div>
-        <div class="card-image-placeholder">🤝 Community</div>
+        <div class="card-image-wrapper">
+          <img :src="communityImg" alt="커뮤니티" class="card-image" />
+        </div>
       </div>
     </section>
 
@@ -57,10 +64,12 @@ const goDashboard = () => {
 </template>
 
 <style scoped>
+/* 기존 스타일 유지 */
 .landing-container {
-  background-color: #D3E4F5; /* 피그마 하늘색 배경 */
+  background-color: #D3E4F5;
   color: #1a1a1a;
   font-family: system-ui, -apple-system, sans-serif;
+  min-height: calc(100vh - 64px);
 }
 .section {
   min-height: 100vh;
@@ -110,12 +119,23 @@ const goDashboard = () => {
 .feature-card.reverse { flex-direction: row-reverse; }
 .card-text h2 { font-size: 2.5rem; margin-bottom: 20px; }
 .card-text p { font-size: 1.2rem; color: #444; line-height: 1.6; }
-.card-image-placeholder {
-  width: 400px; height: 300px;
-  background: rgba(255,255,255,0.5);
+
+/* 이미지 스타일 */
+.card-image-wrapper {
+  width: 400px;
+  height: 300px;
   border-radius: 20px;
-  display: flex; justify-content: center; align-items: center;
-  font-weight: bold; color: #888;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+  background: #fff; /* 이미지가 투명할 경우를 대비해 흰색 배경 */
 }
+
+.card-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* 이미지가 영역을 꽉 채우도록 */
+  display: block;
+}
+
 .welcome-text { font-size: 3rem; font-weight: 800; text-align: center; margin-bottom: 40px; }
 </style>
