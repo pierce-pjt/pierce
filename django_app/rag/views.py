@@ -291,7 +291,8 @@ class UserViewSet(viewsets.ModelViewSet):
 
 class PostViewSet(viewsets.ModelViewSet):
     queryset = Post.objects.all().select_related("author").annotate(
-        comment_count=Count("comments"), like_count=Count("likes")
+        comment_count=Count("comments", distinct=True),
+        like_count=Count("likes", distinct=True)
     )
     serializer_class = PostWriteSerializer
     parser_classes = (MultiPartParser, FormParser, JSONParser)
