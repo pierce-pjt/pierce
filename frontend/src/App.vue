@@ -1,12 +1,18 @@
 <script setup>
 import { onMounted } from 'vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import logoImg from '@/assets/logo.png' 
 
 const route = useRoute()
+const router = useRouter() // 1. 라우터 인스턴스 생성
 const authStore = useAuthStore()
 const isActive = (name) => route.name === name
+
+// 2. 마이페이지 이동 함수
+const goToMyPage = () => {
+  router.push({ name: 'mypage' })
+}
 
 onMounted(() => {
   authStore.fetchUser()
@@ -38,10 +44,10 @@ onMounted(() => {
 
         <div class="auth-area">
           <template v-if="authStore.isAuthenticated && authStore.user">
-            <div class="user-profile">
-              <img :src="authStore.user.profile_image_url" class="user-avatar" />
+            <div class="user-profile" @click="goToMyPage">
+              <img :src="authStore.user.profile_image_url || '/default-profile.png'" class="user-avatar" />
               <span class="user-name">{{ authStore.user.nickname }}</span>
-              <button @click="authStore.logout" class="logout-link">로그아웃</button>
+              <button @click.stop="authStore.logout" class="logout-link">로그아웃</button>
             </div>
           </template>
           <template v-else>
@@ -75,14 +81,15 @@ onMounted(() => {
 
 /* 로그인 버튼 */
 .login-btn { background: #2563eb; color: white; border: none; padding: 7px 18px; border-radius: 99px; font-weight: 600; cursor: pointer; }
-.user-profile { display: flex; align-items: center; gap: 10px; }
+
+/* 프로필 영역: 커서 포인터 추가 */
+.user-profile { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .user-avatar { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #3b82f6; }
 .user-name { font-weight: 600; font-size: 14px; }
 .logout-link { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 13px; }
+.logout-link:hover { color: #ef4444; }
 
-/* 👇 기존 스타일 (여백 있음) */
+/* 메인 영역 스타일 */
 .main-area { max-width: 1120px; margin: 0 auto; padding: 32px 20px 60px; }
-
-/* 👇 추가된 스타일 (여백 없음, 전체 너비) */
 .main-full { width: 100%; padding: 0; margin: 0; }
 </style>

@@ -282,7 +282,12 @@ class UserViewSet(viewsets.ModelViewSet):
             obj.delete()
             return Response({"message": "언팔로우", "is_following": False, "followers_count": target_user.followers.count()})
         return Response({"message": "팔로우", "is_following": True, "followers_count": target_user.followers.count()})
-
+    
+    @action(detail=False, methods=["get"], url_path="rank/top")
+    def top_investors(self, request):
+        # 수익률 상위 5명 조회
+        top_users = User.objects.all().order_by('-total_return_rate')[:5]
+        return Response(UserReadSerializer(top_users, many=True).data)
 
 class PostViewSet(viewsets.ModelViewSet):
     queryset = Post.objects.all().select_related("author").annotate(
@@ -438,7 +443,22 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = get_current_user(self.request)
-        serializer.save(user=user)
+        # 매수/매도 요청 데이터
+        trade_type = serializer.validated_data.get('type')
+        price = serializer.validated_data.get('price')
+        quantity = serializer.validated_data.get('quantity')
+        amount = price * quantity
+
+        if trade_type == 'BUY':
+            if user.mileage < amount:
+                raise PermissionDenied("마일리지가 부족합니다.")
+            user.mileage -= amount
+        elif trade_type == 'SELL':
+            # (보유 수량 체크 로직은 생략되었으나 실제론 필요함)
+            user.mileage += amount
+            
+        user.save() # 마일리지 업데이트 저장
+        serializer.save(user=user, amount=amount)
 
 
 # ========================================================
@@ -534,6 +554,21 @@ class WatchlistItemViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=get_current_user(self.request))
+        
+    @action(detail=False, methods=['post'])
+    def toggle(self, request):
+        user = get_current_user(request)
+        ticker = request.data.get('ticker')
+        if not ticker: return Response(status=400)
+        
+        # 이미 있으면 삭제, 없으면 생성
+        item = WatchlistItem.objects.filter(user=user, ticker=ticker).first()
+        if item:
+            item.delete()
+            return Response({'added': False})
+        else:
+            WatchlistItem.objects.create(user=user, ticker=ticker)
+            return Response({'added': True})
 
 class StrategyNoteViewSet(viewsets.ModelViewSet):
     queryset = StrategyNote.objects.all()

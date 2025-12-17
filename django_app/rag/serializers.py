@@ -17,7 +17,7 @@ class UserReadSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'nickname', 'profile_image_url', 'followers_count', 'following_count', 'is_following']
+        fields = ['id', 'nickname', 'profile_image_url', 'followers_count', 'following_count', 'is_following', 'mileage', 'total_return_rate']
 
     def get_is_following(self, obj):
         request = self.context.get('request')
@@ -62,10 +62,10 @@ class PostReadSerializer(serializers.ModelSerializer):
     comment_count = serializers.IntegerField(read_only=True)
     like_count = serializers.IntegerField(read_only=True)
     is_liked = serializers.SerializerMethodField()
-
+    image_url = serializers.SerializerMethodField() # 이미지 URL 반환
     class Meta:
         model = Post
-        fields = ("id", "title", "content", "author", "ticker", "created_at", "updated_at", "comment_count", "like_count", "is_liked")
+        fields = ("id", "title", "content", "image_url", "author", "ticker", "created_at", "updated_at", "comment_count", "like_count", "is_liked")
 
     def get_is_liked(self, obj):
         request = self.context.get("request")
@@ -73,6 +73,10 @@ class PostReadSerializer(serializers.ModelSerializer):
         user_id = request.session.get("user_id")
         if not user_id: return False
         return obj.likes.filter(user_id=user_id).exists()
+    def get_image_url(self, obj):
+        if obj.image:
+            return obj.image.url
+        return None
 
 class FollowSerializer(serializers.ModelSerializer):
     class Meta:

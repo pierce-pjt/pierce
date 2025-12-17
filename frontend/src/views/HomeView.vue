@@ -1,15 +1,19 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth' // ✅ Auth 스토어 추가
 
 const router = useRouter()
+const authStore = useAuthStore()
+
 const stocks = ref([])
 const loading = ref(false)
+const watchlist = ref([]) // ✅ 관심종목 리스트 상태 추가
 
-// API 호출 경로 (vite.config.js 프록시 설정 덕분에 /api 사용 가능)
+// API 호출 경로
 const API_BASE = '/api'
 
-// 💡 종목 리스트 (필요하면 init_stock_data.py로 추가된 종목들로 확장 가능)
+// 종목 리스트 (확장 가능)
 const TICKERS = [
   { code: '005930', name: '삼성전자' },
   { code: '000660', name: 'SK하이닉스' },
@@ -38,6 +42,48 @@ const getChartPoints = (data) => {
   }).join(' ')
 }
 
+// ✅ 관심종목 가져오기
+const fetchWatchlist = async () => {
+  if (!authStore.isAuthenticated) return
+  try {
+    const res = await fetch(`${API_BASE}/watchlist/`)
+    if (res.ok) {
+      const data = await res.json()
+      // data는 [{ticker: '005930', ...}, ...] 형태
+      watchlist.value = data.map(item => item.ticker)
+    }
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+// ✅ 관심종목 토글 (별 클릭)
+const toggleWatchlist = async (ticker) => {
+  if (!authStore.isAuthenticated) {
+    alert('로그인이 필요한 서비스입니다.')
+    return
+  }
+  
+  try {
+    const res = await fetch(`${API_BASE}/watchlist/toggle/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker })
+    })
+    
+    if (res.ok) {
+      const data = await res.json()
+      if (data.added) {
+        watchlist.value.push(ticker)
+      } else {
+        watchlist.value = watchlist.value.filter(t => t !== ticker)
+      }
+    }
+  } catch (e) {
+    console.error(e)
+  }
+}
+
 // 데이터 불러오기
 const fetchStocks = async () => {
   loading.value = true
@@ -58,9 +104,8 @@ const fetchStocks = async () => {
       }
 
       results.push({
-        ...summary, // API에서 준 name, code, last_price 등 사용
+        ...summary, 
         chartData,
-        // API가 name을 안 주거나 다를 경우를 대비해 프론트 정의 이름 우선 사용 가능
         displayName: item.name 
       })
     }
@@ -76,6 +121,7 @@ const fetchStocks = async () => {
 
 onMounted(() => {
   fetchStocks()
+  fetchWatchlist() // ✅ 마운트 시 관심종목 목록 불러오기
 })
 </script>
 
@@ -102,11 +148,15 @@ onMounted(() => {
         <table class="stocks-table">
           <thead>
             <tr>
-              <th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>차트</th>
+              <th width="50">관심</th> <th>순위</th>
+              <th>종목명</th>
+              <th>현재가</th>
+              <th>등락률</th>
+              <th>차트</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading"><td colspan="5" class="center">로딩 중...</td></tr>
+            <tr v-if="loading"><td colspan="6" class="center">로딩 중...</td></tr>
             <tr 
               v-else 
               v-for="stock in stocks" 
@@ -114,6 +164,10 @@ onMounted(() => {
               @click="goStockDetail(stock)" 
               class="stock-row"
             >
+              <td class="center" @click.stop="toggleWatchlist(stock.code)">
+                <span :class="watchlist.includes(stock.code) ? 'star-filled' : 'star-empty'">★</span>
+              </td>
+
               <td>{{ stock.rank }}</td>
               <td>
                 <div class="name-col">
@@ -144,7 +198,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* (이전 HomeView 스타일 간소화 적용) */
 .home-page { max-width: 1120px; margin: 0 auto; color: #f5f5f7; }
 .market-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
 .market-card { background: #141414; padding: 20px; border-radius: 16px; border: 1px solid #1f2937; }
@@ -167,4 +220,9 @@ onMounted(() => {
 .center { text-align: center; }
 .red { color: #ef4444; }
 .blue { color: #3b82f6; }
+
+/* ✅ 별 아이콘 스타일 */
+.star-filled { color: gold; cursor: pointer; font-size: 20px; }
+.star-empty { color: #444; cursor: pointer; font-size: 20px; }
+.star-empty:hover { color: #888; }
 </style>

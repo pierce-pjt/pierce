@@ -9,7 +9,8 @@ class User(models.Model):
     nickname = models.CharField(max_length=255, unique=True)
     password = models.CharField(max_length=255)
     profile_image_url = models.CharField(max_length=255, null=True, blank=True)
-
+    mileage = models.IntegerField(default=3000) # 가입 시 3000 백마일 기본 지급
+    total_return_rate = models.FloatField(default=0.0) # 수익률 (랭킹용)
     def __str__(self):
         return self.nickname
 
@@ -18,7 +19,8 @@ class Post(models.Model):
     content = models.TextField()
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='posts')
     ticker = models.CharField(max_length=12, db_index=True, null=True, blank=True)
-
+    # ✨ 추가된 필드: 이미지 업로드
+    image = models.ImageField(upload_to='post_images/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
