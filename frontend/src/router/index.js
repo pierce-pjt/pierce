@@ -1,12 +1,27 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomeView from '../views/HomeView.vue' // 혹은 LoginView.vue
+
+// 1. 뷰 컴포넌트들을 미리 import (Lazy Load 방식도 좋지만, 메인은 바로 로딩)
+import LandingView from '../views/LandingView.vue'
+import HomeView from '../views/HomeView.vue'
+import StockDetailView from '../views/StockDetailView.vue'
 
 const routes = [
   {
     path: '/',
-    name: 'home',
+    name: 'landing',
+    component: LandingView,
+  },
+  {
+    path: '/dashboard',
+    name: 'dashboard',
     component: HomeView,
   },
+  {
+    path: '/stock/:code',  // :code 부분이 변수처럼 동작 (예: /stock/005930)
+    name: 'stock-detail',
+    component: StockDetailView,
+  },
+  // 나머지 메뉴들 (뉴스, 커뮤니티, 마이페이지, 로그인 등)
   {
     path: '/news',
     name: 'news',
@@ -28,6 +43,16 @@ const routes = [
     path: '/my',
     name: 'mypage',
     component: () => import('../views/MyPageView.vue'),
+  },
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('../views/LoginView.vue'),
+  },
+  {
+    path: '/signup',
+    name: 'signup',
+    component: () => import('../views/SignupView.vue'),
   },
 ]
 

@@ -130,6 +130,17 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOW_ALL_ORIGINS = True
+# CSRF 검증을 통과시킬 프론트엔드 도메인
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+# 미디어 파일(이미지 등)이 저장될 실제 경로
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# 브라우저에서 접근할 때 사용할 URL (예: http://localhost:8000/media/...)
+MEDIA_URL = '/media/'
 
 
 REST_FRAMEWORK = {

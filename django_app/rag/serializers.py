@@ -17,7 +17,7 @@ class UserReadSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'nickname', 'profile_image_url', 'followers_count', 'following_count', 'is_following']
+        fields = ['id', 'nickname', 'profile_image_url', 'followers_count', 'following_count', 'is_following', 'mileage', 'total_return_rate']
 
     def get_is_following(self, obj):
         request = self.context.get('request')
@@ -30,18 +30,12 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("id", "nickname", "password", "profile_image_url")
-        extra_kwargs = {"password": {"write_only": True, "min_length": 8}}
+        extra_kwargs = {"password": {"write_only": True, "min_length": 4}}
 
     def create(self, validated_data):
         raw_password = validated_data.get("password")
         validated_data["password"] = make_password(raw_password)
         return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        password = validated_data.get("password", None)
-        if password:
-            validated_data["password"] = make_password(password)
-        return super().update(instance, validated_data)
 
 class UserLoginSerializer(serializers.Serializer):
     nickname = serializers.CharField()
@@ -60,7 +54,7 @@ class CommentSerializer(serializers.ModelSerializer):
 class PostWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Post
-        fields = ("id", "title", "content", "ticker", "created_at", "updated_at")
+        fields = ("id", "title", "content", "ticker", "image", "created_at", "updated_at")
         read_only_fields = ("id", "created_at", "updated_at")
 
 class PostReadSerializer(serializers.ModelSerializer):
@@ -68,10 +62,10 @@ class PostReadSerializer(serializers.ModelSerializer):
     comment_count = serializers.IntegerField(read_only=True)
     like_count = serializers.IntegerField(read_only=True)
     is_liked = serializers.SerializerMethodField()
-
+    image_url = serializers.SerializerMethodField() # 이미지 URL 반환
     class Meta:
         model = Post
-        fields = ("id", "title", "content", "author", "ticker", "created_at", "updated_at", "comment_count", "like_count", "is_liked")
+        fields = ("id", "title", "content", "image_url", "author", "ticker", "created_at", "updated_at", "comment_count", "like_count", "is_liked")
 
     def get_is_liked(self, obj):
         request = self.context.get("request")
@@ -79,6 +73,10 @@ class PostReadSerializer(serializers.ModelSerializer):
         user_id = request.session.get("user_id")
         if not user_id: return False
         return obj.likes.filter(user_id=user_id).exists()
+    def get_image_url(self, obj):
+        if obj.image:
+            return obj.image.url
+        return None
 
 class FollowSerializer(serializers.ModelSerializer):
     class Meta:
@@ -97,7 +95,7 @@ class StockPriceSerializer(serializers.ModelSerializer):
     company_name = serializers.ReadOnlyField(source='company.name')
     class Meta:
         model = StockPrice
-        # record_time으로 변경됨
+        # record_time 필드 사용 확인
         fields = ['company', 'company_name', 'record_time', 'open', 'high', 'low', 'close', 'volume']
 
 class StockHoldingSerializer(serializers.ModelSerializer):
