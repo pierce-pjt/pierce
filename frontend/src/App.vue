@@ -5,11 +5,10 @@ import { useAuthStore } from '@/stores/auth'
 import logoImg from '@/assets/logo.png' 
 
 const route = useRoute()
-const router = useRouter() // 1. 라우터 인스턴스 생성
+const router = useRouter()
 const authStore = useAuthStore()
 const isActive = (name) => route.name === name
 
-// 2. 마이페이지 이동 함수
 const goToMyPage = () => {
   router.push({ name: 'mypage' })
 }
@@ -61,9 +60,9 @@ onMounted(() => {
 
     <main :class="route.name === 'landing' ? 'main-full' : 'main-area'">
       <RouterView />
-    </v-main>
-  </v-app>
-</template>
+    </main>
+    
+  </div> </template>
 
 <style scoped>
 .app { min-height: 100vh; background: #050711; color: #f5f5f7; font-family: system-ui, sans-serif; }
@@ -82,7 +81,7 @@ onMounted(() => {
 /* 로그인 버튼 */
 .login-btn { background: #2563eb; color: white; border: none; padding: 7px 18px; border-radius: 99px; font-weight: 600; cursor: pointer; }
 
-/* 프로필 영역: 커서 포인터 추가 */
+/* 프로필 영역 */
 .user-profile { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .user-avatar { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #3b82f6; }
 .user-name { font-weight: 600; font-size: 14px; }
@@ -92,19 +91,17 @@ onMounted(() => {
 /* 메인 영역 스타일 */
 .main-area { max-width: 1120px; margin: 0 auto; padding: 32px 20px 60px; }
 .main-full { width: 100%; padding: 0; margin: 0; }
+</style>
+
 <style>
-/* 👇 [핵심 수정] html뿐만 아니라 Vuetify의 메인 래퍼(wrapper)까지 스크롤바 공간 강제 확보 */
-html, body, .v-application, .v-application__wrap {
+/* 스크롤바 공간 확보 및 기본 폰트 설정 */
+html, body {
   overflow-y: scroll !important; 
-}
-
-/* 폰트 및 배경 설정 */
-:root, body, .v-application {
   font-family: 'Noto Sans KR', sans-serif !important;
-  background-color: #121212; /* 배경색 유지 */
+  background-color: #050711; /* 배경색 일치시킴 */
 }
 
-/* (선택사항) 스크롤바 디자인 */
+/* 스크롤바 디자인 */
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: #1e1e1e; }
 ::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
