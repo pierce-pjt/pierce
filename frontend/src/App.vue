@@ -61,9 +61,8 @@ onMounted(() => {
 
     <main :class="route.name === 'landing' ? 'main-full' : 'main-area'">
       <RouterView />
-    </v-main>
-  </v-app>
-</template>
+    </main>
+  </div> </template>
 
 <style scoped>
 .app { min-height: 100vh; background: #050711; color: #f5f5f7; font-family: system-ui, sans-serif; }
@@ -92,6 +91,8 @@ onMounted(() => {
 /* 메인 영역 스타일 */
 .main-area { max-width: 1120px; margin: 0 auto; padding: 32px 20px 60px; }
 .main-full { width: 100%; padding: 0; margin: 0; }
+</style>
+
 <style>
 /* 👇 [핵심 수정] html뿐만 아니라 Vuetify의 메인 래퍼(wrapper)까지 스크롤바 공간 강제 확보 */
 html, body, .v-application, .v-application__wrap {

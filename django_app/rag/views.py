@@ -9,6 +9,8 @@ from django.conf import settings
 from django.db.models import Count, Sum, Q
 from decimal import Decimal, InvalidOperation
 from pgvector.django import CosineDistance
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
 from datetime import timedelta
 import openai
@@ -61,7 +63,7 @@ def get_current_user(request):
 # =================================================
 # 1. User & Social ViewSets
 # =================================================
-
+@method_decorator(csrf_exempt, name='dispatch')
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -100,7 +102,13 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            return Response(UserReadSerializer(user).data, status=status.HTTP_201_CREATED)
+            return Response(
+                UserReadSerializer(user, context={'request': request}).data, 
+                status=status.HTTP_201_CREATED
+            )
+        
+        # 💥 [디버깅 추가] 서버 터미널에 정확한 에러 원인을 찍어줍니다.
+        print("❌ 회원가입 실패 에러:", serializer.errors) 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=["post"], permission_classes=[AllowAny])
