@@ -292,17 +292,46 @@ onUnmounted(() => {
       </aside>
     </div>
 
+    <div v-if="showTradeModal" class="modal-overlay" @click.self="showTradeModal = false">
+      <div class="modal-content">
+        <div class="modal-header-text">
+          <h2 :class="tradeType === 'BUY' ? 'text-red' : 'text-blue'">
+            {{ summary?.name }} {{ tradeType === 'BUY' ? '매수하기' : '매도하기' }}
+          </h2>
+          <p class="current-price-label">현재가: {{ formatPrice(summary?.last_price) }}원</p>
+        </div>
+
+        <div class="input-group">
+          <label>주문 수량</label>
+          <input 
+            v-model.number="tradeQuantity" 
+            type="number" 
+            placeholder="0" 
+            min="1"
+            class="trade-input"
+          />
+        </div>
+
+        <div class="modal-footer">
+          <button @click="showTradeModal = false" class="btn-cancel">취소</button>
+          <button 
+            @click="executeTrade" 
+            class="btn-submit" 
+            :class="tradeType === 'BUY' ? 'buy-bg' : 'sell-bg'"
+          >
+            {{ tradeType === 'BUY' ? '매수 확인' : '매도 확인' }}
+          </button>
+        </div>
+      </div>
     </div>
+  </div>
 </template>
-
-
-
 
 
 <style scoped>
 .dashboard-detail { background: #000; min-height: 100vh; color: #fff; padding: 0 20px 60px; font-family: sans-serif; }
 .detail-header { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; padding: 30px 0; }
-.empty-chart { height: 400px; display: flex; align-items: center; justify-content: center; color: #666; }
+
 /* 헤더 & 타이틀 */
 .header-left { display: flex; align-items: flex-start; gap: 20px; }
 .back-btn { background: none; border: none; color: #fff; font-size: 24px; cursor: pointer; padding-top: 5px; }
