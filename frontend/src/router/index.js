@@ -25,10 +25,8 @@ const routes = [
   {
     path: '/news',
     name: 'news',
-    // 이제 NewsView가 만들어졌으니 주석 제거
     component: () => import('../views/NewsView.vue'),
   },
-  // 👇 [추가] 뉴스 상세 페이지 (ID를 받아서 이동)
   {
     path: '/news/:id', 
     name: 'news-detail',
@@ -38,6 +36,12 @@ const routes = [
     path: '/community',
     name: 'community',
     component: () => import('../views/CommunityView.vue'),
+  },
+  // 👇 [추가] 커뮤니티 상세 페이지
+  {
+    path: '/community/:id',
+    name: 'community-detail',
+    component: () => import('../views/CommunityDetailView.vue'),
   },
   {
     path: '/my',
