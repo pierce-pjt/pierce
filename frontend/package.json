@@ -14,16 +14,15 @@
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {
+    "@mdi/font": "^7.4.47",
+    "apexcharts": "^4.7.0",
+    "axios": "^1.7.9",
+    "dayjs": "^1.11.13",
     "pinia": "^3.0.4",
     "vue": "^3.5.25",
     "vue-router": "^4.6.3",
-    "vuetify": "^3.7.6",
-    "@mdi/font": "^7.4.47",
-    "axios": "^1.7.9",
-    "apexcharts": "^4.3.0",
-    "vue3-apexcharts": "^1.8.0",
-    "dayjs": "^1.11.13"
-    
+    "vue3-apexcharts": "^1.10.0",
+    "vuetify": "^3.7.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

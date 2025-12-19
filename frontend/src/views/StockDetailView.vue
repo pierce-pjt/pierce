@@ -1,244 +1,298 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth' // ✅ Auth 스토어 추가
+import { useAuthStore } from '@/stores/auth'
+import VueApexCharts from 'vue3-apexcharts'
 
 const route = useRoute()
 const router = useRouter()
-const authStore = useAuthStore() // ✅
+const authStore = useAuthStore()
 const code = route.params.code
 
 const summary = ref(null)
-const chartData = ref([])
 const posts = ref([])
 const loading = ref(true)
+const activeTab = ref('chart') 
+const tradeLogs = ref([])
 
-// 💰 모의투자 관련 상태
+// 📈 차트 데이터 상태
+const fullChartData = ref([]) 
+const chartSeries = ref([])   
+const activeRange = ref('1M') 
+
+// ✅ 등락에 따른 색상 클래스 (상승: red, 하락: blue)
+const priceColorClass = computed(() => {
+  const rate = summary.value?.change_rate || 0
+  if (rate > 0) return 'red'
+  if (rate < 0) return 'blue'
+  return 'gray'
+})
+
+// ✅ 투자 경고 뱃지 (변동률 절대값 5% 이상일 때)
+const isHighVolatility = computed(() => {
+  return Math.abs(summary.value?.change_rate || 0) >= 5.0
+})
+
+const chartOptions = computed(() => ({
+  chart: {
+    type: 'candlestick',
+    background: 'transparent',
+    toolbar: { show: false },
+    animations: { enabled: false }
+  },
+  theme: { mode: 'dark' },
+  xaxis: { 
+    type: 'datetime', 
+    labels: { style: { colors: '#666', fontSize: '10px' } },
+    axisBorder: { show: false }
+  },
+  yaxis: {
+    opposite: true,
+    labels: { 
+      style: { colors: '#999' },
+      formatter: (val) => val?.toLocaleString() 
+    },
+    // 💡 차트가 안 보이는 문제 해결 핵심: 데이터 최소/최대값에 맞춰 자동 확장
+    min: 'dataMin',
+    max: 'dataMax',
+    forceNiceScale: true,
+  },
+  grid: { borderColor: '#1a1a1b', strokeDashArray: 2 },
+  plotOptions: {
+    candlestick: { 
+      colors: { upward: '#f04452', downward: '#3182f6' },
+      wick: { useFillColor: true }
+    }
+  },
+  tooltip: { theme: 'dark' }
+}))
+
+const updateChartRange = (range) => {
+  activeRange.value = range
+  if (!fullChartData.value.length) return
+  const now = new Date().getTime()
+  let diff = 30 * 24 * 60 * 60 * 1000 
+  if (range === '1W') diff = 7 * 24 * 60 * 60 * 1000
+  else if (range === '1Y') diff = 365 * 24 * 60 * 60 * 1000
+  
+  const filtered = fullChartData.value.filter(d => d.x >= (now - diff))
+  chartSeries.value = [{ name: '주가', data: filtered }]
+}
+
+const fetchData = async () => {
+  try {
+    const opt = { credentials: 'include' } // ⭐ 세션 유지 필수
+    
+    const [sumRes, feedRes, tradeRes] = await Promise.all([
+      fetch(`/api/stock-prices/summary/?ticker=${code}`, opt),
+      fetch(`/api/posts/feed/?ticker=${code}`, opt),
+      fetch(`/api/transactions/`, opt)
+    ])
+
+    if (sumRes.ok) summary.value = await sumRes.json()
+    if (feedRes.ok) posts.value = await feedRes.json()
+    
+    // ✅ 실시간 나의 거래 내역 필터링 및 최신순 정렬
+    if (tradeRes.ok) {
+      const allTrades = await tradeRes.json()
+      tradeLogs.value = allTrades
+        .filter(t => String(t.company) === String(code)) // 현재 종목만
+        .reverse() // 최신순
+        .slice(0, 10)
+    }
+
+    if (!fullChartData.value.length) {
+      const chartRes = await fetch(`/api/stock-prices/chart/?ticker=${code}&days=365`, opt)
+      if (chartRes.ok) {
+        const json = await chartRes.json()
+        fullChartData.value = json.map(row => ({
+          x: new Date(row.date).getTime(),
+          y: [
+            parseFloat(row.open), 
+            parseFloat(row.high), 
+            parseFloat(row.low), 
+            parseFloat(row.close)
+          ]
+        }))
+        updateChartRange(activeRange.value)
+      }
+    }
+  } catch(e) { console.error("데이터 로드 실패:", e) } 
+  finally { loading.value = false }
+}
+
 const showTradeModal = ref(false)
 const tradeType = ref('BUY')
 const tradeQuantity = ref(0)
 
-// 차트 SVG 패스 생성
-const chartPath = computed(() => {
-  if (!chartData.value.length) return ''
-  const data = chartData.value
-  const max = Math.max(...data)
-  const min = Math.min(...data)
-  const range = max - min || 1
-  return data.map((v, i) => {
-    const x = (i / (data.length - 1)) * 800
-    const y = 300 - ((v - min) / range) * 300
-    return `${x},${y}`
-  }).join(' ')
-})
-
-const fetchData = async () => {
-  loading.value = true
-  try {
-    // 1. 요약
-    const sumRes = await fetch(`/api/stock-prices/summary/?ticker=${code}`)
-    if (sumRes.ok) summary.value = await sumRes.json()
-
-    // 2. 30일 차트
-    const chartRes = await fetch(`/api/stock-prices/chart/?ticker=${code}&days=30`)
-    if (chartRes.ok) {
-      const json = await chartRes.json()
-      chartData.value = json.map(row => Number(row.close))
-    }
-
-    // 3. 종목 토론글
-    const feedRes = await fetch(`/api/posts/feed/?ticker=${code}`)
-    if (feedRes.ok) posts.value = await feedRes.json()
-
-  } catch(e) { console.error(e) } 
-  finally { loading.value = false }
-}
-
-// 💰 거래 모달 열기
 const openTradeModal = (type) => {
-  if(!authStore.isAuthenticated) return alert('로그인이 필요한 기능입니다.')
+  if(!authStore.isAuthenticated) return alert('로그인이 필요합니다.')
   tradeType.value = type
-  tradeQuantity.value = 0 // 초기화
+  tradeQuantity.value = 0
   showTradeModal.value = true
 }
 
-// 💰 거래 실행
 const executeTrade = async () => {
-  if (tradeQuantity.value <= 0) return alert('수량을 올바르게 입력해주세요.')
-  
-  const price = summary.value.last_price
-  const amount = price * tradeQuantity.value
-
-  // 매수 시 마일리지 체크
-  if (tradeType.value === 'BUY' && authStore.user.mileage < amount) {
-    return alert(`마일리지가 부족합니다! (부족액: ${(amount - authStore.user.mileage).toLocaleString()} M)`)
-  }
-
+  if (tradeQuantity.value <= 0) return alert('수량을 입력해주세요.')
   try {
     const res = await fetch('/api/transactions/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        company: code, 
-        type: tradeType.value,
-        price: price,
-        quantity: tradeQuantity.value
-      })
+      credentials: 'include', 
+      body: JSON.stringify({ company: code, type: tradeType.value, price: summary.value.last_price, quantity: tradeQuantity.value })
     })
-
     if(res.ok) {
-      alert(`${tradeType.value === 'BUY' ? '매수' : '매도'} 주문이 체결되었습니다!`)
-      await authStore.fetchUser() // 마일리지 갱신
+      alert('주문이 체결되었습니다!')
+      await authStore.fetchUser() 
       showTradeModal.value = false
-    } else {
-      const err = await res.json()
-      alert(err.detail || '거래 실패')
+      fetchData() // 내역 즉시 갱신
     }
-  } catch (e) {
-    console.error(e)
-    alert('서버 오류가 발생했습니다.')
-  }
+  } catch (e) { console.error("거래 실패:", e) }
 }
 
-onMounted(() => fetchData())
+let polling = null
+onMounted(() => { fetchData(); polling = setInterval(fetchData, 5000); })
+onUnmounted(() => { if (polling) clearInterval(polling) })
 </script>
 
 <template>
-  <div class="detail-page">
-    <div v-if="loading" class="loading">로딩 중...</div>
-    <div v-else class="content">
-      
-      <div class="header">
-        <button @click="router.back()" class="back-btn">←</button>
-        <div class="header-info">
-          <h1 class="title">{{ summary?.name }} <span class="code">{{ code }}</span></h1>
-          <div class="price-row">
-            <div class="price" :class="summary?.change_rate >= 0 ? 'red' : 'blue'">
-              {{ Number(summary?.last_price).toLocaleString() }}원
-              <span class="change">{{ summary?.change_rate }}%</span>
+  <div class="dashboard-detail">
+    <header class="detail-header">
+      <div class="header-left">
+        <button @click="router.back()" class="back-btn">〈</button>
+        <div class="title-area">
+          <h1 class="stock-title">{{ summary?.name }} <span class="stock-code">{{ code }}</span></h1>
+          <div v-if="isHighVolatility" class="warning-badge">투자경고</div>
+        </div>
+      </div>
+      <div class="header-right" v-if="authStore.isAuthenticated">
+        <div class="mileage-badge">💎 {{ Number(authStore.user?.mileage || 0).toLocaleString() }} M</div>
+        <div class="action-btns">
+          <button @click="openTradeModal('BUY')" class="btn buy">매수</button>
+          <button @click="openTradeModal('SELL')" class="btn sell">매도</button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="toss-nav">
+      <button @click="activeTab = 'chart'" :class="{ active: activeTab === 'chart' }">차트·호가</button>
+      <button @click="activeTab = 'community'" :class="{ active: activeTab === 'community' }">커뮤니티</button>
+    </nav>
+
+    <div class="main-grid">
+      <div class="content-left">
+        <div v-if="activeTab === 'chart'">
+          <section class="chart-section shadow-card">
+            <div class="chart-top">
+              <div class="current-price-box" :class="priceColorClass">
+                <span class="main-price">{{ Number(summary?.last_price).toLocaleString() }}원</span>
+                <span class="main-rate">{{ summary?.change_rate > 0 ? '+' : '' }}{{ summary?.change_rate }}%</span>
+              </div>
+              <div class="range-tabs">
+                <button v-for="r in ['1W', '1M', '1Y']" :key="r" @click="updateChartRange(r)" :class="{ active: activeRange === r }">{{ r }}</button>
+              </div>
             </div>
-            
-            <div class="trading-actions">
-               <div v-if="authStore.isAuthenticated" class="my-mileage">
-                 💎 {{ Number(authStore.user?.mileage || 0).toLocaleString() }} M
-               </div>
-               <button class="trade-btn buy" @click="openTradeModal('BUY')">매수</button>
-               <button class="trade-btn sell" @click="openTradeModal('SELL')">매도</button>
+            <VueApexCharts v-if="chartSeries.length && chartSeries[0].data.length" type="candlestick" height="400" :options="chartOptions" :series="chartSeries" />
+            <div v-else class="chart-loading">차트 데이터를 불러오는 중...</div>
+          </section>
+        </div>
+
+        <div v-if="activeTab === 'community'">
+          <section class="feed-section shadow-card">
+            <h3>종목 토론방</h3>
+            <div v-if="posts.length === 0" class="empty">첫 게시글을 작성해보세요.</div>
+            <div v-for="post in posts" :key="post.id" class="post-item">
+              <div class="post-meta">
+                <span class="user">{{ post.author.nickname || '익명' }}</span>
+                <span class="time">{{ new Date(post.created_at).toLocaleDateString() }}</span>
+              </div>
+              <p class="post-text">{{ post.content }}</p>
             </div>
-          </div>
+          </section>
         </div>
       </div>
 
-      <div class="chart-box">
-        <svg viewBox="0 0 800 300" class="chart-svg">
-          <polyline 
-            :points="chartPath" 
-            fill="none" 
-            :stroke="summary?.change_rate >= 0 ? '#ef4444' : '#3b82f6'" 
-            stroke-width="2" 
-          />
-        </svg>
-      </div>
-
-      <div class="feed-section">
-        <h3>종목 토론방 ({{ posts.length }})</h3>
-        <div v-if="posts.length === 0" class="empty">게시글이 없습니다.</div>
-        <div v-else class="feed-list">
-          <div v-for="post in posts" :key="post.id" class="feed-item">
-            <div class="feed-head">
-              <span class="author">{{ post.author.nickname || '익명' }}</span>
-              <span class="date">{{ new Date(post.created_at).toLocaleDateString() }}</span>
-            </div>
-            <div class="feed-body">{{ post.content }}</div>
-            <div v-if="post.image_url" class="feed-img-wrapper">
-              <img :src="post.image_url" class="feed-img" />
+      <aside class="content-right">
+        <section class="log-section shadow-card">
+          <div class="log-header">
+            <h3>실시간 나의 거래</h3>
+            <span class="live-dot"></span>
+          </div>
+          <div class="log-list">
+            <div v-if="tradeLogs.length === 0" class="empty-log">거래 내역이 없습니다.</div>
+            <div v-for="log in tradeLogs" :key="log.id" class="log-item">
+              <div class="log-info">
+                <span :class="log.type === 'BUY' ? 'tag-buy' : 'tag-sell'">{{ log.type === 'BUY' ? '매수' : '매도' }}</span>
+                <span class="log-time">{{ new Date(log.created_at).toLocaleTimeString() }}</span>
+              </div>
+              <div class="log-details">
+                <span class="log-amt">{{ log.quantity }}주</span>
+                <span class="log-prc">{{ Number(log.price).toLocaleString() }}원</span>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-
+        </section>
+      </aside>
     </div>
 
     <div v-if="showTradeModal" class="modal-overlay" @click.self="showTradeModal = false">
-      <div class="modal-content trade-modal">
-        <h3>{{ tradeType === 'BUY' ? '매수' : '매도' }} 주문</h3>
-        <div class="trade-info">
-          <p>종목: <strong>{{ summary?.name }}</strong></p>
-          <p>현재가: <strong>{{ Number(summary?.last_price).toLocaleString() }}원</strong></p>
+      <div class="modal-content">
+        <h2 :class="tradeType === 'BUY' ? 'red' : 'blue'">{{ tradeType === 'BUY' ? '매수하기' : '매도하기' }}</h2>
+        <div class="modal-body">
+          <p class="modal-stock-name">{{ summary?.name }}</p>
+          <p class="modal-price">현재가: <strong>{{ Number(summary?.last_price).toLocaleString() }}원</strong></p>
+          <div class="input-row">
+            <label>주문 수량</label>
+            <input type="number" v-model.number="tradeQuantity" min="1" placeholder="0" />
+          </div>
+          <div class="total-row">
+            <span>총 주문 금액</span>
+            <strong :class="tradeType === 'BUY' ? 'red' : 'blue'">{{ Number(summary?.last_price * tradeQuantity).toLocaleString() }} M</strong>
+          </div>
         </div>
-        
-        <div class="input-group">
-          <label>수량</label>
-          <input type="number" v-model.number="tradeQuantity" class="trade-input" min="1" />
-        </div>
-        
-        <div class="total-amount">
-          총 주문금액: <span>{{ Number(summary?.last_price * tradeQuantity).toLocaleString() }} M</span>
-        </div>
-        
-        <div class="modal-actions">
-          <button @click="showTradeModal = false" class="cancel-btn">취소</button>
-          <button 
-            @click="executeTrade" 
-            class="submit-btn"
-            :class="tradeType === 'BUY' ? 'buy-bg' : 'sell-bg'"
-          >
-            주문하기
-          </button>
+        <div class="modal-footer">
+          <button @click="showTradeModal = false" class="btn-cancel">취소</button>
+          <button @click="executeTrade" :class="['btn-submit', tradeType === 'BUY' ? 'buy-bg' : 'sell-bg']">주문 확정</button>
         </div>
       </div>
     </div>
-
   </div>
 </template>
 
 <style scoped>
-.detail-page { max-width: 800px; margin: 0 auto; color: #f5f5f7; padding-bottom: 60px; }
-
-/* 헤더 & 가격 */
-.header { display: flex; align-items: flex-start; gap: 20px; margin-bottom: 24px; }
-.back-btn { background: #1f2937; border: none; color: white; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; font-size: 20px; flex-shrink: 0; }
-.header-info { flex-grow: 1; }
-.title { margin: 0; font-size: 24px; }
-.code { font-size: 16px; color: #9ca3af; font-weight: normal; margin-left: 8px; }
-.price-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 8px; flex-wrap: wrap; gap: 10px; }
-.price { font-size: 28px; font-weight: 700; }
-.change { font-size: 16px; margin-left: 10px; }
-.red { color: #ef4444; } .blue { color: #3b82f6; }
-
-/* 💰 트레이딩 버튼 스타일 */
-.trading-actions { display: flex; align-items: center; gap: 10px; }
-.my-mileage { font-size: 14px; color: #fbbf24; font-weight: bold; background: rgba(251, 191, 36, 0.1); padding: 6px 10px; border-radius: 8px; }
-.trade-btn { padding: 8px 16px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; color: white; }
-.trade-btn.buy { background: #ef4444; }
-.trade-btn.sell { background: #3b82f6; }
-.trade-btn:hover { opacity: 0.9; }
-
-/* 차트 */
-.chart-box { background: #141414; border: 1px solid #1f2937; border-radius: 16px; padding: 20px; margin-bottom: 30px; }
-.chart-svg { width: 100%; height: auto; }
-
-/* 피드 */
-.feed-section h3 { border-bottom: 1px solid #1f2937; padding-bottom: 10px; margin-bottom: 16px; }
-.feed-item { background: #141414; border: 1px solid #1f2937; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
-.feed-head { display: flex; justify-content: space-between; color: #9ca3af; font-size: 13px; margin-bottom: 8px; }
-.feed-img-wrapper { margin-top: 10px; border-radius: 8px; overflow: hidden; }
-.feed-img { max-width: 100%; max-height: 300px; object-fit: cover; }
-.empty { text-align: center; color: #6b7280; padding: 30px; }
-
-/* 모달 */
-.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 100; backdrop-filter: blur(4px); }
-.modal-content { background: #1f2937; padding: 24px; border-radius: 16px; width: 90%; max-width: 400px; color: #f5f5f7; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-.trade-info { background: #111827; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
-.trade-info p { margin: 4px 0; display: flex; justify-content: space-between; }
-.input-group { margin-bottom: 20px; }
-.input-group label { display: block; margin-bottom: 6px; font-size: 14px; color: #9ca3af; }
-.trade-input { width: 100%; background: #374151; border: 1px solid #4b5563; color: white; padding: 10px; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
-.total-amount { text-align: right; margin-bottom: 24px; font-size: 18px; font-weight: bold; }
-.total-amount span { color: #fbbf24; }
-.modal-actions { display: flex; gap: 10px; }
-.cancel-btn { flex: 1; background: #374151; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; }
-.submit-btn { flex: 2; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; }
-.buy-bg { background: #ef4444; }
-.sell-bg { background: #3b82f6; }
+/* 기존 스타일 유지 (생략) */
+.dashboard-detail { background: #000; min-height: 100vh; color: #fff; padding: 0 20px 40px; }
+.detail-header { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; padding: 25px 0; }
+.header-left { display: flex; align-items: center; gap: 15px; }
+.title-area { display: flex; align-items: baseline; gap: 10px; }
+.warning-badge { background: #f0445222; color: #f04452; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; border: 1px solid #f0445244; }
+.back-btn { background: none; border: none; color: #fff; font-size: 24px; cursor: pointer; }
+.stock-title { font-size: 24px; font-weight: bold; margin: 0; }
+.stock-code { color: #666; font-size: 16px; font-weight: normal; }
+.header-right { display: flex; align-items: center; gap: 20px; }
+.mileage-badge { background: #1a1a1b; padding: 8px 15px; border-radius: 10px; color: #fbbf24; font-weight: bold; }
+.action-btns { display: flex; gap: 10px; }
+.btn { padding: 10px 25px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; color: #fff; }
+.btn.buy { background: #f04452; } .btn.sell { background: #3182f6; }
+.toss-nav { max-width: 1200px; margin: 0 auto 30px; display: flex; gap: 30px; border-bottom: 1px solid #1a1a1b; }
+.toss-nav button { background: none; border: none; color: #666; font-size: 16px; font-weight: bold; padding: 10px 5px; cursor: pointer; border-bottom: 3px solid transparent; }
+.toss-nav button.active { color: #fff; border-bottom-color: #fff; }
+.main-grid { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 8fr 4fr; gap: 25px; }
+.shadow-card { background: #1a1a1b; border-radius: 24px; padding: 25px; }
+.red { color: #f04452; } .blue { color: #3182f6; }
+.buy-bg { background: #f04452; } .sell-bg { background: #3182f6; }
+.chart-top { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px; }
+.main-price { font-size: 32px; font-weight: bold; margin-right: 10px; }
+.main-rate { font-size: 18px; font-weight: bold; }
+.range-tabs { display: flex; background: #000; padding: 4px; border-radius: 10px; }
+.range-tabs button { background: none; border: none; color: #666; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+.range-tabs button.active { background: #1a1a1b; color: #fff; font-weight: bold; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+.modal-content { background: #1a1a1b; padding: 35px; border-radius: 30px; width: 400px; }
+.modal-footer { display: grid; grid-template-columns: 1fr 2fr; gap: 15px; margin-top: 30px; }
+.tag-buy { color: #f04452; font-weight: bold; font-size: 12px; }
+.tag-sell { color: #3182f6; font-weight: bold; font-size: 12px; }
+.live-dot { width: 8px; height: 8px; background: #00ff00; border-radius: 50%; box-shadow: 0 0 10px #00ff00; animation: pulse 2s infinite; }
+@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+@media (max-width: 1024px) { .main-grid { grid-template-columns: 1fr; } }
 </style>

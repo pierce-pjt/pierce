@@ -1,228 +1,273 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth' // ✅ Auth 스토어 추가
+import { useAuthStore } from '@/stores/auth'
+import VueApexCharts from 'vue3-apexcharts'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
+const popularStocks = ref([])
 const stocks = ref([])
+const watchlist = ref([]) // 관심종목 ticker 문자열 배열: ['005930', '000660', ...]
+const searchQuery = ref('')
+const currentPage = ref(1)
+const totalPages = ref(1)
 const loading = ref(false)
-const watchlist = ref([]) // ✅ 관심종목 리스트 상태 추가
+let pollingTimer = null
 
-// API 호출 경로
 const API_BASE = '/api'
+const PAGE_SIZE = 15
 
-// 종목 리스트 (확장 가능)
-const TICKERS = [
-  { code: '005930', name: '삼성전자' },
-  { code: '000660', name: 'SK하이닉스' },
-  { code: '373220', name: 'LG에너지솔루션' },
-  { code: '035720', name: '카카오' },
-  { code: '035420', name: 'NAVER' },
-  { code: '005380', name: '현대차' },
-  { code: '000270', name: '기아' },
-]
+// 시장 지수 데이터
+const marketIndices = ref([
+  { name: 'KOSPI', value: 2580.45, change_rate: 0.45, series: [{ data: [30, 40, 35, 50, 49, 60] }] },
+  { name: 'KOSDAQ', value: 865.12, change_rate: -0.12, series: [{ data: [50, 40, 45, 30, 35, 20] }] }
+])
 
-// 상세 페이지 이동
-const goStockDetail = (stock) => {
-  router.push({ name: 'stock-detail', params: { code: stock.code } })
+const sparklineOptions = {
+  chart: { sparkline: { enabled: true }, animations: { enabled: false } },
+  stroke: { curve: 'smooth', width: 2 },
+  colors: ['#3182f6'],
+  tooltip: { enabled: false }
 }
 
-// 미니 차트용 포인트 계산
-const getChartPoints = (data) => {
-  if (!data || data.length < 2) return ''
-  const max = Math.max(...data)
-  const min = Math.min(...data)
-  const range = max - min || 1
-  return data.map((v, i) => {
-    const x = (i / (data.length - 1)) * 80
-    const y = 40 - ((v - min) / range) * 40
-    return `${x},${y}`
-  }).join(' ')
-}
+// --- 기능 로직 ---
 
-// ✅ 관심종목 가져오기
-const fetchWatchlist = async () => {
-  if (!authStore.isAuthenticated) return
-  try {
-    const res = await fetch(`${API_BASE}/watchlist/`)
-    if (res.ok) {
-      const data = await res.json()
-      // data는 [{ticker: '005930', ...}, ...] 형태
-      watchlist.value = data.map(item => item.ticker)
-    }
-  } catch (e) {
-    console.error(e)
-  }
-}
+const isWatched = (code) => watchlist.value.includes(code)
 
-// ✅ 관심종목 토글 (별 클릭)
-const toggleWatchlist = async (ticker) => {
-  if (!authStore.isAuthenticated) {
-    alert('로그인이 필요한 서비스입니다.')
-    return
-  }
-  
+// ✅ 관심종목 토글 (세션 인증 대응)
+const toggleWatchlist = async (event, stock) => {
+  event.stopPropagation()
+  if (!authStore.isAuthenticated) return alert('로그인이 필요합니다.')
+
   try {
     const res = await fetch(`${API_BASE}/watchlist/toggle/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ticker })
+      credentials: 'include', // ⭐ 세션 쿠키 포함
+      body: JSON.stringify({ ticker: stock.code })
     })
     
     if (res.ok) {
-      const data = await res.json()
-      if (data.added) {
-        watchlist.value.push(ticker)
+      const result = await res.json()
+      if (result.added) {
+        if (!watchlist.value.includes(stock.code)) watchlist.value.push(stock.code)
       } else {
-        watchlist.value = watchlist.value.filter(t => t !== ticker)
+        watchlist.value = watchlist.value.filter(c => c !== stock.code)
       }
     }
-  } catch (e) {
-    console.error(e)
-  }
+  } catch (e) { console.error("관심종목 토글 실패", e) }
 }
 
-// 데이터 불러오기
-const fetchStocks = async () => {
-  loading.value = true
-  const results = []
+// ✅ 내 관심종목 리스트 가져오기 (새로고침 시 유지용)
+const fetchWatchlist = async () => {
+  if (!authStore.isAuthenticated) return
   try {
-    for (const item of TICKERS) {
-      // 1. 요약 정보
-      const sumRes = await fetch(`${API_BASE}/stock-prices/summary/?ticker=${item.code}`)
-      if (!sumRes.ok) continue
-      const summary = await sumRes.json()
-
-      // 2. 미니 차트 (7일)
-      const chartRes = await fetch(`${API_BASE}/stock-prices/chart/?ticker=${item.code}&days=7`)
-      let chartData = []
-      if (chartRes.ok) {
-        const chartJson = await chartRes.json()
-        chartData = chartJson.map(row => Number(row.close))
-      }
-
-      results.push({
-        ...summary, 
-        chartData,
-        displayName: item.name 
-      })
+    const res = await fetch(`${API_BASE}/watchlist/`, { credentials: 'include' })
+    if (res.ok) {
+      const data = await res.json()
+      // ⭐ 백엔드 모델 필드명인 'ticker'로 매핑
+      watchlist.value = data.map(item => item.ticker) 
     }
-    // 거래량 순 정렬
-    results.sort((a, b) => Number(b.volume) - Number(a.volume))
-    stocks.value = results.map((s, idx) => ({ ...s, rank: idx + 1 }))
-  } catch (e) {
-    console.error(e)
-  } finally {
-    loading.value = false
-  }
+  } catch (e) { console.error("관심종목 로드 실패", e) }
 }
+
+const fetchPopularStocks = async () => {
+  const TRENDING_TICKERS = [
+    { code: '005930', name: '삼성전자' },
+    { code: '000660', name: 'SK하이닉스' },
+    { code: '373220', name: 'LG에너지솔루션' },
+    { code: '035720', name: '카카오' },
+    { code: '005380', name: '현대차' },
+    { code: '035420', name: 'NAVER' }
+  ]
+  try {
+    const results = await Promise.all(TRENDING_TICKERS.map(async (item) => {
+      const res = await fetch(`${API_BASE}/stock-prices/summary/?ticker=${item.code}`)
+      const summary = res.ok ? await res.json() : { last_price: 0, change_rate: 0 }
+      return { ...item, ...summary }
+    }))
+    popularStocks.value = results
+  } catch (e) { console.error(e) }
+}
+
+const fetchStocks = async () => {
+  if (currentPage.value === 1) loading.value = true
+  try {
+    let url = `${API_BASE}/companies/?page=${currentPage.value}`
+    if (searchQuery.value) url += `&search=${encodeURIComponent(searchQuery.value)}`
+    const res = await fetch(url)
+    const data = await res.json()
+    const companyList = data.results || data
+    totalPages.value = Math.ceil((data.count || 1) / PAGE_SIZE)
+
+    stocks.value = await Promise.all(companyList.map(async (company) => {
+      const sumRes = await fetch(`${API_BASE}/stock-prices/summary/?ticker=${company.code}`)
+      // ✅ 404 에러 발생 시(데이터 없을 시) 기본값 할당
+      const summary = sumRes.ok ? await sumRes.json() : { last_price: 0, change_rate: 0, volume: 0 }
+      
+      const tradingValue = summary.volume ? Math.floor(summary.volume / 100000000) : 0
+      const buyRatio = summary.buy_ratio || Math.floor(Math.random() * 40) + 30 
+      const chartSeries = [{ data: [30, 40, 35, 50, 49, 60] }]
+
+      return { ...company, ...summary, tradingValue, buyRatio, chartSeries }
+    }))
+  } finally { loading.value = false }
+}
+
+const startPolling = () => {
+  pollingTimer = setInterval(() => {
+    fetchPopularStocks(); fetchStocks();
+  }, 10000)
+}
+
+// ✅ 인증 상태가 준비되면 관심목록 로드 (새로고침 대응)
+watch(() => authStore.isAuthenticated, (newVal) => {
+  if (newVal) fetchWatchlist()
+}, { immediate: true })
+
+watch(searchQuery, () => { currentPage.value = 1; fetchStocks() })
+watch(currentPage, fetchStocks)
 
 onMounted(() => {
-  fetchStocks()
-  fetchWatchlist() // ✅ 마운트 시 관심종목 목록 불러오기
+  if (authStore.isAuthenticated) fetchWatchlist()
+  fetchPopularStocks(); fetchStocks(); startPolling()
 })
+
+onUnmounted(() => { if (pollingTimer) clearInterval(pollingTimer) })
 </script>
 
 <template>
-  <div class="home-page">
-    <section class="market-grid">
-      <div class="market-card">
-        <div class="market-label">코스피</div>
-        <div class="market-value">2,645.57 <span class="up">▲ 1.2%</span></div>
+  <div class="dashboard-wrapper">
+    <header class="market-header">
+      <div v-for="index in marketIndices" :key="index.name" class="index-card">
+        <div class="index-info">
+          <span class="index-name">{{ index.name }}</span>
+          <div class="index-val-row">
+            <span class="index-val">{{ index.value }}</span>
+            <span :class="index.change_rate >= 0 ? 'red' : 'blue'" class="index-rate">
+              {{ index.change_rate >= 0 ? '+' : '' }}{{ index.change_rate }}%
+            </span>
+          </div>
+        </div>
+        <div class="index-mini-chart">
+          <VueApexCharts type="line" height="40" width="80" :options="sparklineOptions" :series="index.series" />
+        </div>
       </div>
-      <div class="market-card">
-        <div class="market-label">코스닥</div>
-        <div class="market-value">878.45 <span class="up">▲ 0.8%</span></div>
-      </div>
-      <div class="market-card">
-        <div class="market-label">환율 (USD)</div>
-        <div class="market-value">1,324.50 <span class="down">▼ 0.3%</span></div>
-      </div>
-    </section>
+    </header>
 
-    <section class="stocks-card">
-      <h2>실시간 인기 종목</h2>
-      <div class="table-wrapper">
-        <table class="stocks-table">
-          <thead>
-            <tr>
-              <th width="50">관심</th> <th>순위</th>
-              <th>종목명</th>
-              <th>현재가</th>
-              <th>등락률</th>
-              <th>차트</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="loading"><td colspan="6" class="center">로딩 중...</td></tr>
-            <tr 
-              v-else 
-              v-for="stock in stocks" 
-              :key="stock.code" 
-              @click="goStockDetail(stock)" 
-              class="stock-row"
-            >
-              <td class="center" @click.stop="toggleWatchlist(stock.code)">
-                <span :class="watchlist.includes(stock.code) ? 'star-filled' : 'star-empty'">★</span>
-              </td>
-
-              <td>{{ stock.rank }}</td>
-              <td>
-                <div class="name-col">
-                  <span class="name">{{ stock.name || stock.displayName }}</span>
-                  <span class="code">{{ stock.code }}</span>
-                </div>
-              </td>
-              <td class="right">{{ Number(stock.last_price).toLocaleString() }}</td>
-              <td class="right" :class="stock.change_rate >= 0 ? 'red' : 'blue'">
+    <main class="main-content">
+      <section class="popular-section">
+        <h3 class="section-title">지금 뜨는 인기 종목</h3>
+        <div class="popular-grid">
+          <div v-for="(stock, idx) in popularStocks" :key="stock.code" class="pop-card" @click="router.push(`/stock/${stock.code}`)">
+            <div class="pop-left">
+              <span class="rank">{{ idx + 1 }}</span>
+              <button class="star-btn" @click="toggleWatchlist($event, stock)">
+                {{ isWatched(stock.code) ? '★' : '☆' }}
+              </button>
+              <img :src="`https://static.toss.im/png-icons/securities/icn-sec-fill-${stock.code}.png`" class="stock-logo-fixed" />
+              <div class="stock-name-box">
+                <span class="name">{{ stock.name }}</span>
+                <span class="price">{{ Number(stock.last_price || 0).toLocaleString() }}원</span>
+              </div>
+            </div>
+            <div class="pop-right">
+              <span :class="['rate-text', stock.change_rate >= 0 ? 'red' : 'blue']">
                 {{ stock.change_rate > 0 ? '+' : '' }}{{ stock.change_rate }}%
-              </td>
-              <td class="center">
-                <svg width="80" height="40">
-                  <polyline 
-                    :points="getChartPoints(stock.chartData)" 
-                    fill="none" 
-                    :stroke="stock.change_rate >= 0 ? '#ef4444' : '#3b82f6'" 
-                    stroke-width="2" 
-                  />
-                </svg>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="all-stocks-section">
+        <div class="list-header">
+          <h3 class="section-title">전체 주식</h3>
+          <input v-model="searchQuery" placeholder="종목명 검색" class="search-input" />
+        </div>
+
+        <div class="stock-table-header">
+          <span class="col-rank">순위</span>
+          <span class="col-name">종목</span>
+          <span class="col-chart text-center">차트</span>
+          <span class="col-price text-right">현재가</span>
+          <span class="col-rate text-right">등락률</span>
+          <span class="col-value text-right">거래대금</span>
+          <span class="col-ratio text-right">매수비율</span>
+        </div>
+        
+        <div class="stock-list-container shadow-sm">
+          <div v-for="(stock, idx) in stocks" :key="stock.code" class="stock-table-row" @click="router.push(`/stock/${stock.code}`)">
+            <div class="col-rank flex-items">
+              <button class="star-btn" @click="toggleWatchlist($event, stock)">{{ isWatched(stock.code) ? '★' : '☆' }}</button>
+              <span class="num">{{ (currentPage - 1) * PAGE_SIZE + idx + 1 }}</span>
+            </div>
+            <div class="col-name flex-items">
+              <img :src="`https://static.toss.im/png-icons/securities/icn-sec-fill-${stock.code}.png`" class="stock-logo-sm" />
+              <div class="name-box"><span class="name">{{ stock.name }}</span><span class="code">{{ stock.code }}</span></div>
+            </div>
+            <div class="col-chart">
+              <VueApexCharts type="line" height="30" width="80" :options="sparklineOptions" :series="stock.chartSeries" />
+            </div>
+            <div class="col-price text-right font-bold">{{ Number(stock.last_price || 0).toLocaleString() }}원</div>
+            <div class="col-rate text-right" :class="stock.change_rate >= 0 ? 'red' : 'blue'">{{ stock.change_rate > 0 ? '+' : '' }}{{ stock.change_rate }}%</div>
+            <div class="col-value text-right text-gray">{{ stock.tradingValue }}억원</div>
+            <div class="col-ratio flex-column text-right">
+              <div class="ratio-bar-mini"><div class="buy-part" :style="{ width: stock.buyRatio + '%' }"></div></div>
+              <span class="ratio-text">{{ stock.buyRatio }} : {{ 100 - stock.buyRatio }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pagination">
+          <button @click="currentPage--" :disabled="currentPage === 1">이전</button>
+          <span class="page-num">{{ currentPage }} / {{ totalPages }}</span>
+          <button @click="currentPage++" :disabled="currentPage === totalPages">다음</button>
+        </div>
+      </section>
+    </main>
   </div>
 </template>
 
 <style scoped>
-.home-page { max-width: 1120px; margin: 0 auto; color: #f5f5f7; }
-.market-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
-.market-card { background: #141414; padding: 20px; border-radius: 16px; border: 1px solid #1f2937; }
-.market-label { color: #9ca3af; font-size: 13px; margin-bottom: 8px; }
-.market-value { font-size: 20px; font-weight: 600; }
-.up { color: #ef4444; font-size: 14px; margin-left: 8px; }
-.down { color: #3b82f6; font-size: 14px; margin-left: 8px; }
+.dashboard-wrapper { background: #000; color: #fff; min-height: 100vh; padding-bottom: 50px; }
+.red { color: #f04452; }
+.blue { color: #3182f6; }
 
-.stocks-card { background: #141414; border-radius: 16px; border: 1px solid #1f2937; overflow: hidden; }
-.stocks-card h2 { padding: 20px; margin: 0; border-bottom: 1px solid #1f2937; font-size: 18px; }
-.stocks-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-.stocks-table th { text-align: left; color: #9ca3af; padding: 12px 20px; background: #0a0a0a; }
-.stocks-table td { padding: 12px 20px; border-top: 1px solid #1f2937; }
-.stock-row:hover { background: #1a1a1a; cursor: pointer; }
+/* 레이아웃 */
+.market-header { display: flex; gap: 15px; padding: 20px; max-width: 1200px; margin: 0 auto; border-bottom: 1px solid #1a1a1b; }
+.index-card { background: #1a1a1b; padding: 15px 20px; border-radius: 16px; display: flex; justify-content: space-between; align-items: center; flex: 1; }
+.main-content { max-width: 1200px; margin: 0 auto; padding: 30px 20px; }
+.section-title { font-size: 18px; font-weight: 700; margin-bottom: 15px; }
 
-.name-col { display: flex; flex-direction: column; }
-.name { font-weight: 600; }
-.code { font-size: 11px; color: #6b7280; }
-.right { text-align: right; }
-.center { text-align: center; }
-.red { color: #ef4444; }
-.blue { color: #3b82f6; }
+/* 인기 종목 그리드 */
+.popular-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 12px; margin-bottom: 40px; }
+.pop-card { background: #1a1a1b; padding: 12px 16px; border-radius: 16px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: background 0.2s; }
+.pop-card:hover { background: #252526; }
+.pop-left { display: flex; align-items: center; gap: 10px; }
+.rank { font-size: 14px; font-weight: bold; color: #666; width: 15px; }
+.stock-logo-fixed { width: 40px; height: 40px; border-radius: 50%; }
 
-/* ✅ 별 아이콘 스타일 */
-.star-filled { color: gold; cursor: pointer; font-size: 20px; }
-.star-empty { color: #444; cursor: pointer; font-size: 20px; }
-.star-empty:hover { color: #888; }
+/* 전체 주식 테이블 */
+.stock-table-header { display: grid; grid-template-columns: 100px 1.5fr 100px 120px 100px 100px 100px; padding: 10px 20px; font-size: 12px; color: #666; border-bottom: 1px solid #1a1a1b; }
+.stock-table-row { display: grid; grid-template-columns: 100px 1.5fr 100px 120px 100px 100px 100px; align-items: center; padding: 15px 20px; border-bottom: 1px solid #1a1a1b; cursor: pointer; }
+.stock-table-row:hover { background: #1a1a1b; }
+.flex-items { display: flex; align-items: center; gap: 10px; }
+.text-right { text-align: right; }
+.font-bold { font-weight: 600; }
+.text-gray { color: #919193; font-size: 13px; }
+
+/* UI 요소 */
+.star-btn { background: none; border: none; color: #ff9d00; font-size: 18px; cursor: pointer; }
+.num { color: #919193; font-weight: bold; width: 20px; text-align: center; }
+.stock-logo-sm { width: 32px; height: 32px; border-radius: 50%; }
+.ratio-bar-mini { width: 60px; height: 4px; background: #3182f6; border-radius: 2px; overflow: hidden; margin-left: auto; }
+.buy-part { background: #f04452; height: 100%; }
+.ratio-text { font-size: 10px; color: #666; margin-top: 4px; display: block; }
+
+.pagination { display: flex; justify-content: center; align-items: center; gap: 20px; margin-top: 30px; }
+.pagination button { background: #1a1a1b; border: none; color: #fff; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+.pagination button:disabled { opacity: 0.3; }
 </style>

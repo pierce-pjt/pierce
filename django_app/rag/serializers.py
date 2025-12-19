@@ -129,12 +129,13 @@ class LatestNewsSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('body_embedding_vector',)
 
+# serializers.py 수정
 class WatchlistItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = WatchlistItem
-        fields = "__all__"
+        # 명확하게 ticker 필드를 포함시킵니다.
+        fields = ("id", "ticker", "created_at") 
         read_only_fields = ("id", "user", "created_at")
-
 class StrategyNoteSerializer(serializers.ModelSerializer):
     class Meta:
         model = StrategyNote
