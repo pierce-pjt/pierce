@@ -26,8 +26,12 @@ SECRET_KEY = 'django-insecure-zxg*!(sr_j6&nbgedee2h#b2m)ybu^t^=2)c$+#)y8shu=yghu
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
-
+ALLOWED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    'django_web',  # 👈 이거 추가!
+    'django',      # 👈 혹시 몰라서 이것도
+]
 
 # Application definition
 
@@ -129,8 +133,15 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOW_ALL_ORIGINS = True
-# CSRF 검증을 통과시킬 프론트엔드 도메인
+CORS_ALLOW_ALL_ORIGINS = False  # 모든 허용을 끔
+CORS_ALLOW_CREDENTIALS = True   # 쿠키/세션 허용 (필수)
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+# CSRF 신뢰 도메인 (이것도 같이 해주는 것이 안전합니다)
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",

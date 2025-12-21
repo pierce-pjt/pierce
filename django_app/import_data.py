@@ -3,13 +3,14 @@ import django
 import pandas as pd
 import time
 import openai
+import pytz  # 👈 추가
+from datetime import datetime  # 👈 추가
 from django.conf import settings
 
 # 1. Django 환경 설정
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'my_project.settings')
 django.setup()
 
-# 👇 [수정] 모델명 변경 (StockDailyPrice -> StockPrice, Company 추가)
 from rag.models import HistoricalNews, StockPrice, Company
 
 # 2. OpenAI 클라이언트 설정
@@ -18,8 +19,11 @@ client = openai.OpenAI(
     base_url=settings.OPENAI_API_BASE
 )
 
+# 👇 한국 시간대 설정
+kst = pytz.timezone('Asia/Seoul')
+
 def get_embedding(text):
-    """OpenAI API로 임베딩 생성 (길이 제한 적용) - 기존 로직 유지"""
+    """OpenAI API로 임베딩 생성 (길이 제한 적용)"""
     try:
         if not text: return None
         text = text.replace("\n", " ")
@@ -41,7 +45,6 @@ def import_news():
     print("📰 뉴스 데이터 적재 및 임베딩 생성 시작... (시간이 좀 걸립니다)")
     
     try:
-        # 파일명은 그대로 유지
         df = pd.read_csv('news_data_20251203_1625.csv')
     except FileNotFoundError:
         print("❌ 뉴스 CSV 파일을 찾을 수 없습니다.")
@@ -57,9 +60,29 @@ def import_news():
 
         vector = get_embedding(row['body'])
         
-        # HistoricalNews 모델 필드명은 기존과 동일하므로 그대로 유지
+        # 👇 news_collection_date를 timezone-aware로 변환
+        try:
+            # CSV의 날짜 형식에 맞게 조정 (예: '2025-12-03' 또는 '2025-12-03 16:25:00')
+            if isinstance(row['news_collection_date'], str):
+                # 날짜만 있는 경우
+                if ' ' not in row['news_collection_date']:
+                    naive_dt = datetime.strptime(row['news_collection_date'], '%Y-%m-%d')
+                else:
+                    # 날짜 + 시간이 있는 경우
+                    naive_dt = datetime.strptime(row['news_collection_date'], '%Y-%m-%d %H:%M:%S')
+            else:
+                # pandas Timestamp인 경우
+                naive_dt = pd.to_datetime(row['news_collection_date']).to_pydatetime()
+            
+            # timezone-aware로 변환
+            news_collection_date = kst.localize(naive_dt)
+            
+        except Exception as e:
+            print(f"⚠️ 날짜 변환 실패 (row {idx}): {e}, 현재 시간 사용")
+            news_collection_date = datetime.now(kst)
+        
         news = HistoricalNews(
-            news_collection_date=row['news_collection_date'],
+            news_collection_date=news_collection_date,  # 👈 수정
             title=row['title'],
             body=row['body'],
             url=row['url'],
@@ -88,16 +111,14 @@ def import_stock():
     # 중복 제거 (티커 + 날짜 기준)
     df.drop_duplicates(subset=['ticker', 'date'], keep='first', inplace=True)
 
-    # 👇 [추가] Company 객체 선행 생성 (ForeignKey 연결을 위해 필수)
+    # Company 객체 선행 생성
     print("🏢 종목 정보(Company) 확인 및 생성 중...")
     unique_tickers = df['ticker'].unique()
     
-    # CSV에 종목명이 없으면 티커를 이름으로 사용, 있으면 name 컬럼 사용 권장
-    # 여기서는 CSV 구조를 모르니 티커를 이름으로 임시 사용하거나 'Unknown' 처리
     for ticker in unique_tickers:
         Company.objects.get_or_create(
             code=ticker,
-            defaults={'name': f"종목_{ticker}", 'market': 'KOSPI'} 
+            defaults={'name': f"종목_{ticker}", 'market': 'KOSPI', 'is_active': True} 
         )
     
     # 빠른 조회를 위해 Company 객체들을 딕셔너리로 로딩
@@ -106,24 +127,53 @@ def import_stock():
     stock_list = []
     print(f"📊 처리할 주식 데이터: {len(df)}건")
     
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         # 해당 티커의 Company 객체 가져오기
         company_obj = company_map.get(row['ticker'])
         
         if not company_obj:
-            continue # 만약 Company가 없으면 스킵
+            continue
+        
+        # 👇 record_time을 timezone-aware로 변환
+        try:
+            # CSV의 날짜 형식에 맞게 조정
+            if isinstance(row['date'], str):
+                # 날짜만 있는 경우 (예: '2025-12-03')
+                if ' ' not in row['date']:
+                    naive_dt = datetime.strptime(row['date'], '%Y-%m-%d')
+                    # 장 마감 시간으로 설정 (15:30)
+                    naive_dt = naive_dt.replace(hour=15, minute=30, second=0, microsecond=0)
+                else:
+                    # 날짜 + 시간이 있는 경우
+                    naive_dt = datetime.strptime(row['date'], '%Y-%m-%d %H:%M:%S')
+            else:
+                # pandas Timestamp인 경우
+                naive_dt = pd.to_datetime(row['date']).to_pydatetime()
+                if naive_dt.hour == 0 and naive_dt.minute == 0:
+                    # 시간이 00:00이면 15:30으로 설정
+                    naive_dt = naive_dt.replace(hour=15, minute=30)
+            
+            # timezone-aware로 변환
+            record_time = kst.localize(naive_dt)
+            
+        except Exception as e:
+            print(f"⚠️ 날짜 변환 실패 (row {idx}, ticker {row['ticker']}): {e}")
+            continue
 
-        # 👇 [수정] StockPrice 모델 필드명에 맞춰 변경
         stock = StockPrice(
-            company=company_obj,       # ForeignKey 객체 할당
-            record_time=row['date'],   # date -> record_time
-            open=row['open'],
-            high=row['high'],
-            low=row['low'],
-            close=row['close'],
-            volume=row['volume']
+            company=company_obj,
+            record_time=record_time,  # 👈 수정
+            open=float(row['open']),
+            high=float(row['high']),
+            low=float(row['low']),
+            close=float(row['close']),
+            volume=int(row['volume'])
         )
         stock_list.append(stock)
+        
+        # 진행 상황 표시
+        if (idx + 1) % 500 == 0:
+            print(f"   ... {idx + 1}/{len(df)} 처리 중")
 
     # ignore_conflicts=True: 이미 있는 날짜면 에러 안 내고 넘어감
     StockPrice.objects.bulk_create(stock_list, ignore_conflicts=True)
@@ -131,11 +181,12 @@ def import_stock():
 
 if __name__ == '__main__':
     print("🧹 기존 데이터를 초기화합니다...")
-    # 모델명 변경 반영
     HistoricalNews.objects.all().delete()
     StockPrice.objects.all().delete()
-    # 주의: Company는 다른 데이터(포트폴리오 등)와 연결될 수 있어 삭제 시 주의 필요
-    # 테스트 단계라면 Company도 초기화해도 됨: Company.objects.all().delete()
+    # 주의: Company는 다른 데이터와 연결될 수 있어 필요시만 삭제
+    # Company.objects.all().delete()
     
     import_news()
     import_stock()
+    
+    print("\n🎉 모든 데이터 적재 완료!")
