@@ -60,17 +60,30 @@ const toggleWatchlist = async (event, stock) => {
   } catch (e) { console.error("관심종목 토글 실패", e) }
 }
 
-// ✅ 내 관심종목 리스트 가져오기 (새로고침 시 유지용)
 const fetchWatchlist = async () => {
   if (!authStore.isAuthenticated) return
   try {
+    // 1. URL 끝에 슬래시(/)가 누락되지 않았는지 확인하세요.
     const res = await fetch(`${API_BASE}/watchlist/`, { credentials: 'include' })
+    
     if (res.ok) {
       const data = await res.json()
-      // ⭐ 백엔드 모델 필드명인 'ticker'로 매핑
-      watchlist.value = data.map(item => item.ticker) 
+      console.log("관심종목 데이터 구조 확인:", data) // 디버깅용
+
+      // 2. 페이지네이션 결과(data.results)인지 일반 배열(data)인지 체크
+      const items = data.results || data 
+
+      if (Array.isArray(items)) {
+        watchlist.value = items.map(item => item.ticker)
+      } else {
+        console.warn("예상치 못한 데이터 형식입니다.", data)
+      }
+    } else {
+      console.error(`에러 발생: ${res.status}`)
     }
-  } catch (e) { console.error("관심종목 로드 실패", e) }
+  } catch (e) {
+    console.error("관심종목 로드 실패", e)
+  }
 }
 
 const fetchPopularStocks = async () => {
