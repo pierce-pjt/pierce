@@ -495,18 +495,23 @@ class CompanyViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['code', 'name']
 
 class StockPriceViewSet(viewsets.ReadOnlyModelViewSet):
-    # 기본 쿼리셋 (record_time 역순)
     queryset = StockPrice.objects.all().order_by('-record_time')
     serializer_class = StockPriceSerializer
-    
-    # 💥💥💥 [핵심 수정] summary, chart 액션 추가 💥💥💥
+
+    # 1. 기본 리스트 호출 시 404 방지 및 필터링 기능 추가
+    def get_queryset(self):
+        queryset = StockPrice.objects.all().order_by('-record_time')
+        ticker = self.request.query_params.get('ticker')
+        if ticker:
+            queryset = queryset.filter(company_id=ticker)
+        return queryset
+
     @action(detail=False, methods=['get'])
     def summary(self, request):
         ticker = request.query_params.get('ticker')
         if not ticker:
             return Response({"error": "Ticker is required"}, status=400)
 
-        # company_id(=symbol)로 필터링, 최신 날짜순 2개
         prices = StockPrice.objects.filter(company_id=ticker).order_by('-record_time')[:2]
 
         if not prices.exists():
@@ -522,28 +527,29 @@ class StockPriceViewSet(viewsets.ReadOnlyModelViewSet):
             if prev.close > 0:
                 change_rate = (change / prev.close) * 100
 
-        data = {
+        return Response({
             "name": latest.company.name if latest.company else ticker,
             "code": latest.company_id,
             "last_price": latest.close,
             "volume": latest.volume,
             "change": change,
             "change_rate": round(change_rate, 2),
-        }
-        return Response(data)
+        })
 
     @action(detail=False, methods=['get'])
     def chart(self, request):
         ticker = request.query_params.get('ticker')
         days = int(request.query_params.get('days', 30))
         
-        # 최신 n일치 데이터
+        # ✅ 캔들차트에 필요한 OHLC(Open, High, Low, Close) 데이터를 모두 포함
         data = StockPrice.objects.filter(company_id=ticker).order_by('-record_time')[:days]
         
-        # 차트용 오름차순 정렬
         results = [
             {
                 "date": d.record_time.strftime("%Y-%m-%d"),
+                "open": d.open,   # 추가
+                "high": d.high,   # 추가
+                "low": d.low,     # 추가
                 "close": d.close
             } 
             for d in reversed(data)
