@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import VueApexCharts from 'vue3-apexcharts'
@@ -9,360 +9,285 @@ const route = useRoute()
 const router = useRouter()
 const newsId = route.params.id
 
-// --- 상태 변수 ---
+// --- 상태 관리 ---
 const news = ref(null)
 const similarResult = ref(null)
 const loading = ref(true)
-const isChartReady = ref(false)
+const stockList = ref([]) 
+const currentStockIndex = ref(0)
 
-// 🔄 여러 종목 관리를 위한 상태
-const stockList = ref([]) // { name, ticker, series, annotationX } 형태의 객체 배열
-const currentStockIndex = ref(0) // 현재 보고 있는 종목의 인덱스
+const currentStock = computed(() => stockList.value[currentStockIndex.value] || null)
 
-// 현재 선택된 종목 데이터 (Computed)
-const currentStock = computed(() => {
-  if (stockList.value.length === 0) return null
-  return stockList.value[currentStockIndex.value]
-})
-
-// --- 차트 옵션 (공통) ---
-const baseChartOptions = {
-  chart: {
-    type: 'candlestick',
-    background: 'transparent',
-    toolbar: { show: false },
-    animations: { enabled: true, dynamicAnimation: { enabled: true, speed: 350 } }
-  },
-  theme: { mode: 'dark' },
-  grid: { borderColor: '#333' },
-  xaxis: {
-    type: 'category', 
-    labels: {
-      style: { colors: '#888' },
-      rotate: -45,
-      formatter: (val) => dayjs(val).isValid() ? dayjs(val).format('MM/DD') : val
-    },
-    tooltip: { enabled: false }
-  },
-  yaxis: {
-    tooltip: { enabled: true },
-    labels: { 
-      style: { colors: '#888' }, 
-      formatter: (val) => val.toLocaleString() 
-    }
-  },
-  plotOptions: {
-    candlestick: { colors: { upward: '#00E396', downward: '#FF4560' } }
-  },
-  tooltip: {
-    theme: 'dark',
-    x: {
-      formatter: function(val, { dataPointIndex, w }) {
-        const data = w.config.series[0].data[dataPointIndex]
-        return data ? data.originalDate : val
-      }
-    }
-  }
-}
-
-// 반응형 차트 옵션 (세로선 포함)
+// --- 차트 옵션 (주말 제거 로직 및 디자인 통합) ---
 const chartOptions = computed(() => {
   const stock = currentStock.value
-  if (!stock) return baseChartOptions
-
   return {
-    ...baseChartOptions,
+    chart: { 
+      type: 'candlestick', 
+      background: 'transparent', 
+      toolbar: { show: false },
+      animations: { enabled: true, speed: 800 } 
+    },
+    theme: { mode: 'dark' },
+    // ✅ 주말 공백 제거를 위한 Category 타입 유지
+    xaxis: {
+      type: 'category',
+      labels: { 
+        style: { colors: '#777', fontSize: '11px' },
+        formatter: (val) => dayjs(val).isValid() ? dayjs(val).format('MM/DD') : val
+      },
+      axisBorder: { show: false },
+      tooltip: { enabled: false }
+    },
+    yaxis: { 
+      opposite: true, 
+      labels: { 
+        style: { colors: '#777' }, 
+        formatter: (v) => v?.toLocaleString() 
+      } 
+    },
+    grid: { borderColor: '#222', strokeDashArray: 4 },
+    plotOptions: {
+      candlestick: { 
+        colors: { upward: '#f04452', downward: '#3182f6' },
+        wick: { useFillColor: true }
+      }
+    },
+    // ✅ 뉴스 발생 시점 표시 (가로 뱃지 스타일로 시인성 개선)
     annotations: {
-      xaxis: [
-        {
-          x: stock.annotationX, // 현재 종목에 맞는 세로선 위치
-          borderColor: '#FF4560',
-          borderWidth: 2,
-          strokeDashArray: 4, // 점선
-          opacity: 1,
-          label: {
-            text: '뉴스 발생 🚨',
-            borderColor: '#FF4560',
-            orientation: 'horizontal', // 가로 배치
-            position: 'top',
-            offsetY: 10,
-            style: {
-              color: '#fff',
-              background: '#FF4560',
-              fontSize: '12px',
-              fontWeight: 'bold',
-              padding: { left: 8, right: 8, top: 4, bottom: 4 }
-            }
-          }
+      xaxis: stock ? [{
+        x: stock.annotationX,
+        borderColor: '#f04452',
+        borderWidth: 2,
+        strokeDashArray: 5,
+        label: {
+          text: '과거 사례 발생 🚨',
+          orientation: 'horizon',
+          style: { 
+            color: '#fff', 
+            background: '#f04452', 
+            fontSize: '11px', 
+            fontWeight: 'bold',
+            padding: { left: 8, right: 8, top: 4, bottom: 4 }
+          },
+          offsetY: 0
         }
-      ]
-    }
+      }] : []
+    },
+    tooltip: { theme: 'dark' }
   }
 })
 
-// --- 네비게이션 함수 ---
-const prevStock = () => {
-  if (currentStockIndex.value > 0) currentStockIndex.value--
-}
-
-const nextStock = () => {
-  if (currentStockIndex.value < stockList.value.length - 1) currentStockIndex.value++
-}
-
-// 🔗 과거 뉴스로 이동
-const goToPastNews = () => {
-  if (similarResult.value?.similar_news?.url) {
-    window.open(similarResult.value.similar_news.url, '_blank') 
-  }
-}
-
-// --- 데이터 처리 ---
+// --- 데이터 처리 로직 ---
 const processChartData = (rawChartData, newsDateStr) => {
   if (!rawChartData || rawChartData.length === 0) return null
+  
+  // 1. 데이터를 차트 형식에 맞게 변환
+  const candles = rawChartData.map(item => ({
+    x: dayjs(item.record_time).format('MM/DD'),
+    y: [item.open, item.high, item.low, item.close],
+    originalDate: item.record_time.substring(0, 10)
+  }))
 
-  // 1. 데이터 변환 (x를 단순 문자열로)
-  const candles = rawChartData.map(item => {
-    const fullDate = item.record_time.substring(0, 10)
-    return {
-      x: dayjs(fullDate).format('MM/DD'), 
-      y: [Number(item.open), Number(item.high), Number(item.low), Number(item.close)],
-      originalDate: fullDate 
-    }
-  })
+  // 2. 뉴스 발생 날짜와 가장 가까운 인덱스 탐색 (세로선 위치)
+  let idx = candles.findIndex(c => c.originalDate >= newsDateStr)
+  if (idx === -1) idx = candles.length - 1
 
-  // 2. 세로선 위치 찾기
-  let targetIndex = candles.findIndex(c => c.originalDate >= newsDateStr)
-  if (targetIndex === -1) targetIndex = candles.length - 1
-
-  return {
-    series: [{ name: '주가', data: candles }],
-    annotationX: candles[targetIndex].x
+  return { 
+    series: [{ name: '주가', data: candles }], 
+    annotationX: candles[idx].x 
   }
 }
 
 const fetchData = async () => {
   try {
     loading.value = true
-    isChartReady.value = false
-    stockList.value = [] // 초기화
-
     const [newsRes, simRes] = await Promise.all([
       axios.get(`http://localhost:8000/api/latest-news/${newsId}/`),
       axios.get(`http://localhost:8000/api/latest-news/${newsId}/similar_historical/`)
     ])
 
     news.value = newsRes.data
-
     if (simRes.data.similar_news) {
       similarResult.value = simRes.data
-      const newsDateStr = simRes.data.similar_news.news_collection_date.substring(0, 10)
+      const dateStr = simRes.data.similar_news.news_collection_date.substring(0, 10)
       
-      const relatedStocks = simRes.data.related_stocks || []
-      
-      relatedStocks.forEach(stockData => {
-        const processed = processChartData(stockData.chart_data, newsDateStr)
-        
-        if (processed) {
+      // 관련 종목별 차트 데이터 가공
+      simRes.data.related_stocks?.forEach(s => {
+        const proc = processChartData(s.chart_data, dateStr)
+        if (proc) {
           stockList.value.push({
-            name: stockData.name,    
-            ticker: stockData.ticker, 
-            series: processed.series,
-            annotationX: processed.annotationX
+            name: s.name,
+            ticker: s.ticker,
+            ...proc
           })
         }
       })
-
-      if (stockList.value.length > 0) {
-        isChartReady.value = true
-      }
     }
-
-  } catch (error) {
-    console.error("데이터 로딩 실패:", error)
+  } catch (e) {
+    console.error("Data Fetch Error:", e)
   } finally {
     loading.value = false
   }
 }
 
-onMounted(() => {
-  fetchData()
-})
+onMounted(fetchData)
+
+const prevStock = () => { if (currentStockIndex.value > 0) currentStockIndex.value-- }
+const nextStock = () => { if (currentStockIndex.value < stockList.value.length - 1) currentStockIndex.value++ }
+const goToPastNews = () => window.open(similarResult.value.similar_news.url, '_blank')
 </script>
 
 <template>
-  <v-container class="py-8" style="max-width: 1200px;">
-    
-    <v-btn variant="text" color="grey" prepend-icon="mdi-arrow-left" @click="router.back()" class="mb-4">
-      목록으로
-    </v-btn>
-
-    <div v-if="loading" class="d-flex justify-center my-10">
-      <v-progress-circular indeterminate color="primary"></v-progress-circular>
+  <div class="report-wrapper">
+    <div v-if="loading" class="loading-overlay">
+      <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
     </div>
 
-    <div v-else-if="news">
-      <v-row>
-        <v-col cols="12">
-          <h1 class="text-h4 font-weight-bold text-white mb-3">{{ news.title }}</h1>
-          <div class="d-flex align-center gap-2 mb-6">
-            <v-chip color="blue" variant="tonal" size="small">{{ news.company_name }}</v-chip>
-            <span class="text-grey">{{ news.source }} · {{ dayjs(news.news_collection_date).format('YYYY-MM-DD HH:mm') }}</span>
+    <template v-else-if="news">
+      <header class="hero-section">
+        <div class="hero-blur-bg" :style="{ backgroundImage: `url(${news.image_url})` }"></div>
+        <div class="hero-gradient"></div>
+        <div class="hero-inner">
+          <v-btn icon="mdi-arrow-left" variant="text" color="white" @click="router.back()" class="mb-6"></v-btn>
+          <div class="news-meta">
+            <span class="source-tag">{{ news.source }}</span>
+            <span class="date-tag">{{ dayjs(news.news_collection_date).format('YYYY.MM.DD HH:mm') }}</span>
           </div>
-          
-          <v-card color="#1e1e1e" class="pa-5" rounded="xl" elevation="0">
-            <div class="d-flex">
-              <v-img v-if="news.image_url" :src="news.image_url" max-width="200" rounded="lg" class="mr-4" cover></v-img>
-              <div class="w-100">
-                <p class="text-body-1 text-grey-lighten-1" style="line-height: 1.8;">{{ news.body }}</p>
-                <v-btn :href="news.url" target="_blank" color="primary" variant="text" class="px-0 mt-2" append-icon="mdi-open-in-new">
-                  원본 기사 보러가기
-                </v-btn>
+          <h1 class="main-title">{{ news.title }}</h1>
+        </div>
+      </header>
+
+      <div class="report-grid">
+        <div class="main-column">
+          <section class="content-card article-body">
+            <h3 class="label-text">주요 브리핑</h3>
+            <p class="body-text">{{ news.body }}</p>
+            <v-btn variant="outlined" color="primary" :href="news.url" target="_blank" class="mt-6 rounded-lg">
+              기사 원문 읽기 <v-icon size="small" class="ml-2">mdi-open-in-new</v-icon>
+            </v-btn>
+          </section>
+
+          <section class="content-card chart-area" v-if="similarResult">
+            <div class="card-header">
+              <h3 class="label-text">🤖 과거 주식차트</h3>
+              <div class="stock-switcher" v-if="stockList.length > 1">
+                <button @click="prevStock" :disabled="currentStockIndex === 0">〈</button>
+                <span class="stock-name">{{ currentStock?.name }}</span>
+                <button @click="nextStock" :disabled="currentStockIndex === stockList.length - 1">〉</button>
               </div>
             </div>
-          </v-card>
-        </v-col>
-      </v-row>
+            <div class="chart-box">
+              <VueApexCharts v-if="currentStock" :key="currentStock.ticker" type="candlestick" height="350" 
+                             :options="chartOptions" :series="currentStock.series" />
+              <div v-else class="no-data">차트 데이터를 찾을 수 없습니다.</div>
+            </div>
+          </section>
+        </div>
 
-      <v-row class="mt-4" v-if="similarResult">
-        <v-col cols="12">
-          <h3 class="text-h5 font-weight-bold text-white mb-4">
-            🤖 AI 과거 사례 분석
-          </h3>
-          <p class="text-grey mb-4">
-            이 뉴스와 가장 유사한 과거 사례는 
-            <span class="text-primary font-weight-bold">{{ similarResult.similar_news.news_collection_date }}</span>에 발생했습니다.<br>
-            (유사도: {{ (similarResult.similarity_score * 100).toFixed(1) }}%)
-          </p>
+        <aside class="side-column">
+          <div class="side-card summary-info" v-if="similarResult">
+            <h3 class="side-label">AI 분석 요약</h3>
+            <div class="stat-item">
+              <span class="stat-label">사례 유사도</span>
+              <span class="stat-value text-primary">{{ (similarResult.similarity_score * 100).toFixed(1) }}%</span>
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: similarResult.similarity_score * 100 + '%' }"></div>
+              </div>
+            </div>
+            <div class="stat-item mt-6">
+              <span class="stat-label">관련 종목</span>
+              <div class="tag-group">
+                <v-chip v-for="s in stockList" :key="s.ticker" size="small" color="primary" variant="tonal">{{ s.name }}</v-chip>
+              </div>
+            </div>
+          </div>
 
-          <v-row>
-            <v-col cols="12" md="8">
-              <v-card color="#141414" variant="outlined" class="pa-4 h-100" rounded="xl">
-                
-                <div class="d-flex align-center justify-space-between mb-4">
-                  <div class="d-flex align-center">
-                    
-                    <v-btn 
-                      icon="mdi-chevron-left" 
-                      variant="text" 
-                      color="grey"
-                      density="comfortable"
-                      :disabled="currentStockIndex === 0"
-                      @click="prevStock"
-                    ></v-btn>
-
-                    <h4 class="text-h6 font-weight-bold text-white mx-2" v-if="currentStock">
-                      📉 당시 {{ currentStock.name }} 주가 흐름
-                      <span class="text-caption text-grey ml-1">({{ currentStock.ticker }})</span>
-                    </h4>
-
-                    <v-btn 
-                      icon="mdi-chevron-right" 
-                      variant="text" 
-                      color="grey"
-                      density="comfortable"
-                      :disabled="currentStockIndex === stockList.length - 1"
-                      @click="nextStock"
-                    ></v-btn>
-                  </div>
-
-                  <v-chip color="orange" variant="flat" size="small">과거 데이터</v-chip>
-                </div>
-                
-                <div v-if="isChartReady && currentStock">
-                  <VueApexCharts 
-                    :key="currentStock.ticker" 
-                    type="candlestick" 
-                    height="350" 
-                    :options="chartOptions" 
-                    :series="currentStock.series" 
-                  />
-                </div>
-                <div v-else class="text-center py-10 text-grey">
-                  해당 기간의 주가 데이터가 없습니다.
-                </div>
-              </v-card>
-            </v-col>
-
-            <v-col cols="12" md="4">
-              <v-hover v-slot="{ isHovering, props }">
-                <v-card 
-                  v-bind="props"
-                  color="#2a2a2a" 
-                  class="pa-6 h-100 cursor-pointer transition-swing d-flex flex-column" 
-                  :class="{ 'on-hover': isHovering }"
-                  :elevation="isHovering ? 8 : 0"
-                  rounded="xl" 
-                  @click="goToPastNews"
-                >
-                  <div class="d-flex justify-space-between align-center mb-4">
-                    <v-chip color="grey-lighten-1" size="small" variant="flat" class="font-weight-bold text-black">
-                      유사 뉴스
-                    </v-chip>
-                    <v-icon color="grey" v-if="isHovering">mdi-arrow-right</v-icon>
-                  </div>
-                  
-                  <h4 class="text-h6 font-weight-bold text-white mb-4" style="line-height: 1.4;">
-                    {{ similarResult.similar_news.title }}
-                  </h4>
-
-                  <p class="text-body-2 text-grey-lighten-1 mb-auto text-truncate-expanded">
-                    {{ similarResult.similar_news.body }}
-                  </p>
-                  
-                  <v-divider class="my-4"></v-divider>
-                  
-                  <div class="text-caption text-grey d-flex align-center">
-                    <v-icon icon="mdi-domain" size="small" class="mr-1"></v-icon>
-                    관련 종목: 
-                    <span v-if="stockList.length > 0" class="ml-1 text-white font-weight-medium">
-                      {{ stockList.map(s => s.name).join(', ') }}
-                    </span>
-                    <span v-else class="ml-1 text-white font-weight-medium">
-                      {{ similarResult.company_name }}
-                    </span>
-                  </div>
-                </v-card>
-              </v-hover>
-            </v-col>
-          </v-row>
-        </v-col>
-      </v-row>
-      
-      <v-row v-else class="mt-4">
-        <v-col cols="12">
-           <v-alert type="info" variant="tonal" color="grey">
-             아직 분석 가능한 유사 과거 데이터가 충분하지 않습니다.
-           </v-alert>
-        </v-col>
-      </v-row>
-
-    </div>
-  </v-container>
+          <div class="side-card past-news-link" v-if="similarResult" @click="goToPastNews">
+            <h3 class="side-label">유사 과거 기사</h3>
+            <div class="past-preview">
+              <span class="past-date">{{ similarResult.similar_news.news_collection_date }}</span>
+              <h4 class="past-title">{{ similarResult.similar_news.title }}</h4>
+              <p class="past-excerpt">{{ similarResult.similar_news.body }}</p>
+            </div>
+            <div class="hover-action">당시 기사 보기 〉</div>
+          </div>
+        </aside>
+      </div>
+    </template>
+  </div>
 </template>
 
 <style scoped>
-/* 텍스트 내용 12줄로 확장 */
-.text-truncate-expanded {
-  display: -webkit-box;
-  -webkit-line-clamp: 12;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  line-height: 1.6;
+.report-wrapper { background: #000; min-height: 100vh; color: #fff; padding-bottom: 60px; font-family: 'Pretendard', sans-serif; }
+
+/* 1. Hero Header - 블러 제거 및 높이 최적화 */
+.hero-section { 
+  position: relative; 
+  min-height: 400px; /* 고정 높이 대신 최소 높이 설정 */
+  overflow: hidden; 
+  display: flex; 
+  align-items: flex-end; 
+  padding: 60px 5% 40px; 
+}
+.hero-blur-bg { 
+  position: absolute; 
+  inset: 0; 
+  background-size: cover; 
+  background-position: center; 
+  filter: brightness(0.3); /* 블러는 제거하고, 글자가 잘 보이게 밝기만 조절 */
+  transform: scale(1); /* 블러 제거로 인한 스케일 보정 */
+}
+.hero-gradient { 
+  position: absolute; 
+  inset: 0; 
+  background: linear-gradient(to top, #000 0%, transparent 100%); 
+}
+.hero-inner { position: relative; z-index: 10; max-width: 1200px; margin: 0 auto; width: 100%; }
+.main-title { font-size: 38px; font-weight: 800; line-height: 1.3; letter-spacing: -1px; margin-top: 20px; word-break: keep-all; }
+.source-tag { background: #3182f6; padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: bold; margin-right: 12px; }
+.date-tag { color: #aaa; font-size: 14px; }
+
+/* 2. Layout Grid - 겹침 현상 해결 및 간격 확보 */
+.report-grid { 
+  display: grid; 
+  grid-template-columns: 1.6fr 0.9fr; 
+  gap: 30px; 
+  max-width: 1200px; 
+  margin: 40px auto 0; /* 마이너스 마진 제거 및 40px 여백 추가 */
+  padding: 0 20px; 
+  position: relative; 
+  z-index: 20; 
 }
 
-.cursor-pointer {
-  cursor: pointer;
-}
-/* 호버 시 배경색 살짝 밝게 */
-.on-hover {
-  background-color: #333333 !important;
-}
+/* 3. Common Card Styles */
+.content-card, .side-card { background: #111; border: 1px solid #222; border-radius: 24px; padding: 28px; margin-bottom: 24px; }
+.label-text { font-size: 14px; color: #3182f6; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 20px; }
 
-.news-item-card {
-  /* 👇 [추가] 높이를 강제로 고정해서 내용물 변화에 따른 떨림 방지 */
-  height: 160px; 
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+/* 이하 기존 스타일 유지 */
+.body-text { font-size: 17px; line-height: 1.8; color: #ccc; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.stock-switcher { background: #000; padding: 6px 16px; border-radius: 12px; display: flex; align-items: center; gap: 15px; border: 1px solid #222; }
+.stock-name { font-weight: bold; font-size: 14px; }
+.stock-switcher button { color: #555; transition: 0.2s; }
+.stock-switcher button:not(:disabled):hover { color: #fff; }
+.side-label { font-size: 18px; font-weight: bold; margin-bottom: 24px; }
+.stat-label { font-size: 13px; color: #666; margin-bottom: 8px; display: block; }
+.stat-value { font-size: 28px; font-weight: 800; display: block; margin-bottom: 12px; }
+.progress-bar { height: 6px; background: #222; border-radius: 10px; overflow: hidden; }
+.progress-fill { height: 100%; background: #3182f6; }
+.tag-group { display: flex; flex-wrap: wrap; gap: 8px; }
+.past-news-link { cursor: pointer; transition: 0.3s; border-top: 4px solid #3182f6; }
+.past-news-link:hover { transform: translateY(-5px); background: #161616; }
+.past-date { font-size: 12px; color: #555; }
+.past-title { font-size: 16px; font-weight: bold; margin: 10px 0; line-height: 1.4; }
+.past-excerpt { font-size: 14px; color: #777; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.hover-action { margin-top: 15px; font-size: 12px; color: #3182f6; font-weight: bold; }
+.loading-overlay { height: 100vh; display: flex; align-items: center; justify-content: center; background: #000; }
+
+@media (max-width: 960px) {
+  .report-grid { grid-template-columns: 1fr; margin-top: 20px; }
+  .main-title { font-size: 28px; }
+  .hero-section { min-height: 300px; padding-top: 40px; }
 }
 </style>
