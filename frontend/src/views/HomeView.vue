@@ -9,7 +9,7 @@ const authStore = useAuthStore()
 
 const popularStocks = ref([])
 const stocks = ref([])
-const watchlist = ref([]) // 관심종목 ticker 문자열 배열: ['005930', '000660', ...]
+const watchlist = ref([]) // 관심종목 ticker 문자열 배열
 const searchQuery = ref('')
 const currentPage = ref(1)
 const totalPages = ref(1)
@@ -19,10 +19,10 @@ let pollingTimer = null
 const API_BASE = '/api'
 const PAGE_SIZE = 15
 
-// 시장 지수 데이터
+// --- 시장 지수 데이터 상태 ---
 const marketIndices = ref([
-  { name: 'KOSPI', value: 2580.45, change_rate: 0.45, series: [{ data: [30, 40, 35, 50, 49, 60] }] },
-  { name: 'KOSDAQ', value: 865.12, change_rate: -0.12, series: [{ data: [50, 40, 45, 30, 35, 20] }] }
+  { name: 'KOSPI', value: 0, change_rate: 0, series: [{ data: [] }] },
+  { name: 'KOSDAQ', value: 0, change_rate: 0, series: [{ data: [] }] }
 ])
 
 const sparklineOptions = {
@@ -36,7 +36,20 @@ const sparklineOptions = {
 
 const isWatched = (code) => watchlist.value.includes(code)
 
-// ✅ 관심종목 토글 (세션 인증 대응)
+// 시장 지수 패칭 (백엔드 MarketIndexViewSet 호출)
+const fetchMarketIndices = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/market-indices/`)
+    if (res.ok) {
+      const data = await res.json()
+      marketIndices.value = data
+    }
+  } catch (e) {
+    console.error("지수 로드 실패:", e)
+  }
+}
+
+// 관심종목 토글
 const toggleWatchlist = async (event, stock) => {
   event.stopPropagation()
   if (!authStore.isAuthenticated) return alert('로그인이 필요합니다.')
@@ -45,7 +58,7 @@ const toggleWatchlist = async (event, stock) => {
     const res = await fetch(`${API_BASE}/watchlist/toggle/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include', // ⭐ 세션 쿠키 포함
+      credentials: 'include',
       body: JSON.stringify({ ticker: stock.code })
     })
     
@@ -60,32 +73,22 @@ const toggleWatchlist = async (event, stock) => {
   } catch (e) { console.error("관심종목 토글 실패", e) }
 }
 
+// 관심종목 리스트 불러오기
 const fetchWatchlist = async () => {
   if (!authStore.isAuthenticated) return
   try {
-    // 1. URL 끝에 슬래시(/)가 누락되지 않았는지 확인하세요.
     const res = await fetch(`${API_BASE}/watchlist/`, { credentials: 'include' })
-    
     if (res.ok) {
       const data = await res.json()
-      console.log("관심종목 데이터 구조 확인:", data) // 디버깅용
-
-      // 2. 페이지네이션 결과(data.results)인지 일반 배열(data)인지 체크
       const items = data.results || data 
-
       if (Array.isArray(items)) {
         watchlist.value = items.map(item => item.ticker)
-      } else {
-        console.warn("예상치 못한 데이터 형식입니다.", data)
       }
-    } else {
-      console.error(`에러 발생: ${res.status}`)
     }
-  } catch (e) {
-    console.error("관심종목 로드 실패", e)
-  }
+  } catch (e) { console.error("관심종목 로드 실패", e) }
 }
 
+// 인기 종목 불러오기
 const fetchPopularStocks = async () => {
   const TRENDING_TICKERS = [
     { code: '005930', name: '삼성전자' },
@@ -105,6 +108,7 @@ const fetchPopularStocks = async () => {
   } catch (e) { console.error(e) }
 }
 
+// 전체 주식 리스트 불러오기
 const fetchStocks = async () => {
   if (currentPage.value === 1) loading.value = true
   try {
@@ -117,25 +121,27 @@ const fetchStocks = async () => {
 
     stocks.value = await Promise.all(companyList.map(async (company) => {
       const sumRes = await fetch(`${API_BASE}/stock-prices/summary/?ticker=${company.code}`)
-      // ✅ 404 에러 발생 시(데이터 없을 시) 기본값 할당
       const summary = sumRes.ok ? await sumRes.json() : { last_price: 0, change_rate: 0, volume: 0 }
       
       const tradingValue = summary.volume ? Math.floor(summary.volume / 100000000) : 0
       const buyRatio = summary.buy_ratio || Math.floor(Math.random() * 40) + 30 
-      const chartSeries = [{ data: [30, 40, 35, 50, 49, 60] }]
+      const chartSeries = [{ data: [30, 40, 35, 50, 49, 60] }] // 임시 차트 데이터
 
       return { ...company, ...summary, tradingValue, buyRatio, chartSeries }
     }))
   } finally { loading.value = false }
 }
 
+// 실시간 폴링 (10초 주기)
 const startPolling = () => {
   pollingTimer = setInterval(() => {
-    fetchPopularStocks(); fetchStocks();
+    fetchMarketIndices(); 
+    fetchPopularStocks(); 
+    fetchStocks();
   }, 10000)
 }
 
-// ✅ 인증 상태가 준비되면 관심목록 로드 (새로고침 대응)
+// 인증 상태 변화 감시
 watch(() => authStore.isAuthenticated, (newVal) => {
   if (newVal) fetchWatchlist()
 }, { immediate: true })
@@ -145,7 +151,10 @@ watch(currentPage, fetchStocks)
 
 onMounted(() => {
   if (authStore.isAuthenticated) fetchWatchlist()
-  fetchPopularStocks(); fetchStocks(); startPolling()
+  fetchMarketIndices()
+  fetchPopularStocks()
+  fetchStocks()
+  startPolling()
 })
 
 onUnmounted(() => { if (pollingTimer) clearInterval(pollingTimer) })
@@ -158,14 +167,18 @@ onUnmounted(() => { if (pollingTimer) clearInterval(pollingTimer) })
         <div class="index-info">
           <span class="index-name">{{ index.name }}</span>
           <div class="index-val-row">
-            <span class="index-val">{{ index.value }}</span>
+            <span class="index-val">{{ index.value.toLocaleString() }}</span>
             <span :class="index.change_rate >= 0 ? 'red' : 'blue'" class="index-rate">
               {{ index.change_rate >= 0 ? '+' : '' }}{{ index.change_rate }}%
             </span>
           </div>
         </div>
         <div class="index-mini-chart">
-          <VueApexCharts type="line" height="40" width="80" :options="sparklineOptions" :series="index.series" />
+          <VueApexCharts 
+            v-if="index.series[0].data.length > 0"
+            type="line" height="40" width="80" 
+            :options="sparklineOptions" :series="index.series" 
+          />
         </div>
       </div>
     </header>
@@ -245,42 +258,56 @@ onUnmounted(() => { if (pollingTimer) clearInterval(pollingTimer) })
 </template>
 
 <style scoped>
-.dashboard-wrapper { background: #000; color: #fff; min-height: 100vh; padding-bottom: 50px; }
+.dashboard-wrapper { background: #000; color: #fff; min-height: 100vh; padding-bottom: 50px; font-family: sans-serif; }
 .red { color: #f04452; }
 .blue { color: #3182f6; }
 
-/* 레이아웃 */
+/* 지수 영역 */
 .market-header { display: flex; gap: 15px; padding: 20px; max-width: 1200px; margin: 0 auto; border-bottom: 1px solid #1a1a1b; }
-.index-card { background: #1a1a1b; padding: 15px 20px; border-radius: 16px; display: flex; justify-content: space-between; align-items: center; flex: 1; }
+.index-card { background: #1a1a1b; padding: 15px 20px; border-radius: 16px; display: flex; justify-content: space-between; align-items: center; flex: 1; border: 1px solid #222; }
+.index-name { color: #919193; font-size: 14px; font-weight: bold; }
+.index-val { font-size: 20px; font-weight: 800; display: block; margin-top: 4px; }
+.index-rate { font-size: 14px; font-weight: bold; }
+
 .main-content { max-width: 1200px; margin: 0 auto; padding: 30px 20px; }
-.section-title { font-size: 18px; font-weight: 700; margin-bottom: 15px; }
+.section-title { font-size: 20px; font-weight: 700; margin-bottom: 20px; }
 
 /* 인기 종목 그리드 */
 .popular-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 12px; margin-bottom: 40px; }
-.pop-card { background: #1a1a1b; padding: 12px 16px; border-radius: 16px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: background 0.2s; }
+.pop-card { background: #1a1a1b; padding: 16px; border-radius: 20px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: 0.2s; border: 1px solid #222; }
 .pop-card:hover { background: #252526; }
-.pop-left { display: flex; align-items: center; gap: 10px; }
-.rank { font-size: 14px; font-weight: bold; color: #666; width: 15px; }
-.stock-logo-fixed { width: 40px; height: 40px; border-radius: 50%; }
+.pop-left { display: flex; align-items: center; gap: 12px; }
+.rank { font-size: 15px; font-weight: bold; color: #666; width: 15px; }
+.stock-logo-fixed { width: 44px; height: 44px; border-radius: 50%; }
+.stock-name-box .name { display: block; font-weight: bold; font-size: 16px; }
+.stock-name-box .price { color: #919193; font-size: 13px; }
+.rate-text { font-weight: bold; font-size: 16px; }
 
-/* 전체 주식 테이블 */
-.stock-table-header { display: grid; grid-template-columns: 100px 1.5fr 100px 120px 100px 100px 100px; padding: 10px 20px; font-size: 12px; color: #666; border-bottom: 1px solid #1a1a1b; }
-.stock-table-row { display: grid; grid-template-columns: 100px 1.5fr 100px 120px 100px 100px 100px; align-items: center; padding: 15px 20px; border-bottom: 1px solid #1a1a1b; cursor: pointer; }
-.stock-table-row:hover { background: #1a1a1b; }
+/* 전체 주식 리스트 */
+.list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+.search-input { background: #1a1a1b; border: 1px solid #333; color: #fff; padding: 10px 16px; border-radius: 12px; width: 250px; }
+.stock-table-header { display: grid; grid-template-columns: 100px 1.5fr 100px 120px 100px 100px 100px; padding: 10px 20px; font-size: 12px; color: #666; }
+.stock-table-row { display: grid; grid-template-columns: 100px 1.5fr 100px 120px 100px 100px 100px; align-items: center; padding: 18px 20px; border-bottom: 1px solid #1a1a1b; cursor: pointer; transition: 0.2s; }
+.stock-table-row:hover { background: #111; }
+
 .flex-items { display: flex; align-items: center; gap: 10px; }
 .text-right { text-align: right; }
-.font-bold { font-weight: 600; }
-.text-gray { color: #919193; font-size: 13px; }
-
-/* UI 요소 */
-.star-btn { background: none; border: none; color: #ff9d00; font-size: 18px; cursor: pointer; }
-.num { color: #919193; font-weight: bold; width: 20px; text-align: center; }
-.stock-logo-sm { width: 32px; height: 32px; border-radius: 50%; }
-.ratio-bar-mini { width: 60px; height: 4px; background: #3182f6; border-radius: 2px; overflow: hidden; margin-left: auto; }
+.col-ratio { display: flex; flex-direction: column; align-items: flex-end; }
+.ratio-bar-mini { width: 60px; height: 4px; background: #3182f6; border-radius: 2px; overflow: hidden; margin-bottom: 4px; }
 .buy-part { background: #f04452; height: 100%; }
-.ratio-text { font-size: 10px; color: #666; margin-top: 4px; display: block; }
+.ratio-text { font-size: 10px; color: #666; }
 
-.pagination { display: flex; justify-content: center; align-items: center; gap: 20px; margin-top: 30px; }
-.pagination button { background: #1a1a1b; border: none; color: #fff; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
-.pagination button:disabled { opacity: 0.3; }
+/* 공통 UI */
+.star-btn { background: none; border: none; color: #ff9d00; font-size: 20px; cursor: pointer; transition: transform 0.2s; }
+.star-btn:hover { transform: scale(1.2); }
+.stock-logo-sm { width: 36px; height: 36px; border-radius: 50%; }
+.pagination { display: flex; justify-content: center; align-items: center; gap: 20px; margin-top: 40px; }
+.pagination button { background: #1a1a1b; border: 1px solid #333; color: #fff; padding: 10px 20px; border-radius: 12px; cursor: pointer; font-weight: bold; }
+.pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+@media (max-width: 768px) {
+  .popular-grid { grid-template-columns: 1fr; }
+  .stock-table-header, .stock-table-row { grid-template-columns: 80px 1fr 100px; }
+  .col-chart, .col-value, .col-ratio { display: none; }
+}
 </style>

@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from pgvector.django import CosineDistance
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+import yfinance as yf
 
 from datetime import timedelta
 import openai
@@ -597,6 +598,55 @@ class TransactionViewSet(viewsets.ModelViewSet):
         user.save() # 마일리지 업데이트 저장
         serializer.save(user=user, amount=amount)
 
+# ========================================================
+# 2-1. Market Index ViewSet (KOSPI, KOSDAQ 전용)
+# ========================================================
+
+
+class MarketIndexViewSet(viewsets.ViewSet):
+    permission_classes = [AllowAny]
+
+    def list(self, request):
+        # KOSPI: ^KS11, KOSDAQ: ^KQ11 (yfinance 티커 기준)
+        indices = {
+            'KOSPI': '^KS11',
+            'KOSDAQ': '^KQ11'
+        }
+        result = []
+
+        for name, ticker_symbol in indices.items():
+            try:
+                # 1. 지수 데이터 가져오기 (최근 5일치 일봉 데이터)
+                ticker = yf.Ticker(ticker_symbol)
+                # '1d' 간격으로 최근 5일 데이터를 가져와서 차트와 변동률 계산
+                hist = ticker.history(period="5d", interval="1d")
+
+                if hist.empty:
+                    continue
+
+                # 2. 실시간 정보 및 변동률 계산
+                latest_close = hist['Close'].iloc[-1]
+                prev_close = hist['Close'].iloc[-2]
+                change_rate = ((latest_close - prev_close) / prev_close) * 100
+
+                # 3. 차트용 데이터 (최근 10~20개 포인트 - sparkline용)
+                # interval을 '15m' 등으로 설정하면 더 세밀한 차트가 가능하지만, 
+                # 여기서는 간단히 일별 종가 리스트를 보냅니다.
+                chart_data = hist['Close'].tolist()
+
+                result.append({
+                    "name": name,
+                    "value": round(float(latest_close), 2),
+                    "change_rate": round(float(change_rate), 2),
+                    "series": [{"data": [round(float(x), 2) for x in chart_data]}]
+                })
+            except Exception as e:
+                print(f"❌ {name} 지수 수집 에러: {e}")
+                result.append({
+                    "name": name, "value": 0, "change_rate": 0, "series": [{"data": []}]
+                })
+
+        return Response(result)
 
 # ========================================================
 # 3. News ViewSets

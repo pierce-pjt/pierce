@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
+from .views import MarketIndexViewSet
 
 router = DefaultRouter()
 
@@ -22,6 +23,8 @@ router.register(r'latest-news', views.LatestNewsViewSet)
 # MyPage
 router.register(r'watchlist', views.WatchlistItemViewSet)
 router.register(r'strategy-notes', views.StrategyNoteViewSet)
+
+router.register(r'market-indices', MarketIndexViewSet, basename='market-indices')
 
 urlpatterns = [
     path('', include(router.urls)),
