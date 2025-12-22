@@ -919,6 +919,15 @@ class LatestNewsViewSet(viewsets.ModelViewSet):
                 serializer.save()
         else:
             serializer.save()
+        
+    @action(detail=True, methods=['post'], url_path='increment-view')
+    def increment_view(self, request, pk=None):
+        """뉴스 조회수 증가"""
+        news = self.get_object()
+        news.view_count = F('view_count') + 1
+        news.save(update_fields=['view_count'])
+        news.refresh_from_db()
+        return Response({'view_count': news.view_count}, status=200)
 # ========================================================
 # 4. MyPage ViewSets
 # ========================================================

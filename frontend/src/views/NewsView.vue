@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import axios from 'axios'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -8,6 +9,8 @@ import 'dayjs/locale/ko'
 dayjs.extend(relativeTime)
 dayjs.locale('ko')
 
+const router = useRouter()
+
 // --- 1. 상태 관리 ---
 const newsItems = ref([])       
 const loading = ref(false)      
@@ -15,19 +18,16 @@ const searchQuery = ref('')
 const page = ref(1)             
 const totalPages = ref(1)       
 
-// 👇 [수정] 카테고리 목록 변경 (금융뉴스 삭제 -> 유사도순 추가)
 const CATEGORIES = ['통합뉴스', '인기뉴스', '최신뉴스', '유사도순']
 const activeCategory = ref('통합뉴스')
 
 // --- 2. API 통신 ---
 const fetchNews = async () => {
   loading.value = true
-  // 페이지 넘길 때마다 스크롤 맨 위로 부드럽게 이동
   window.scrollTo({ top: 0, behavior: 'smooth' })
   
   try {
-    // 👇 [로직] 선택된 카테고리에 따라 정렬 파라미터(sort) 결정
-    let sortParam = 'latest' // 기본값 (통합뉴스, 최신뉴스)
+    let sortParam = 'latest'
 
     if (activeCategory.value === '인기뉴스') {
       sortParam = 'popular'
@@ -39,7 +39,7 @@ const fetchNews = async () => {
       params: {
         search: searchQuery.value,
         page: page.value, 
-        sort: sortParam, // 백엔드로 정렬 기준 전송
+        sort: sortParam,
       }
     })
     
@@ -52,6 +52,24 @@ const fetchNews = async () => {
   } finally {
     loading.value = false
   }
+}
+
+// 🆕 조회수 증가 함수
+const incrementViewCount = async (newsId) => {
+  try {
+    await axios.post(`http://localhost:8000/api/latest-news/${newsId}/increment-view/`)
+  } catch (error) {
+    console.error('조회수 증가 실패:', error)
+  }
+}
+
+// 🆕 뉴스 클릭 핸들러
+const handleNewsClick = (news) => {
+  // 조회수 증가 (백그라운드 처리)
+  incrementViewCount(news.id)
+  
+  // 즉시 상세 페이지로 이동
+  router.push({ name: 'news-detail', params: { id: news.id } })
 }
 
 // --- 3. 이벤트 핸들러 ---
@@ -71,7 +89,6 @@ const onSearch = () => {
 const selectCategory = (cat) => {
   activeCategory.value = cat
   page.value = 1
-  // 검색어가 없어도 '유사도순(역사 패턴 매칭)' 조회가 가능하므로 바로 fetchNews 호출
   fetchNews()
 }
 
@@ -160,7 +177,7 @@ const getSentimentText = (sentiment) => {
             variant="outlined"
             rounded="xl"
             link
-            @click="$router.push({ name: 'news-detail', params: { id: news.id } })"
+            @click="handleNewsClick(news)"
           >
             <div class="d-flex pa-5">
               <div class="thumbnail-box rounded-lg mr-5 d-flex align-center justify-center bg-grey-darken-4 overflow-hidden border-subtle">
@@ -244,7 +261,6 @@ const getSentimentText = (sentiment) => {
 </template>
 
 <style scoped>
-/* 기존 스타일 */
 .custom-card {
   background-color: #141414 !important;
   border-color: #333 !important;
@@ -290,20 +306,17 @@ const getSentimentText = (sentiment) => {
   margin-bottom: 64px !important;
 }
 
-/* 👇 [핵심] 스크롤바 유무에 따른 화면 흔들림 방지 */
+/* 스크롤바 유무에 따른 화면 흔들림 방지 */
 .v-container {
-  min-height: 101vh !important; /* 항상 스크롤바가 생기도록 강제 */
+  min-height: 101vh !important;
 }
 
-/* 👇 [핵심] 하단바 고정 및 흔들림 방지 */
+/* 하단바 고정 및 흔들림 방지 */
 .fixed-bottom-pagination {
   position: fixed;
   bottom: 0;
   left: 0;
-  
-  /* 100vw 대신 100%를 사용하여 스크롤바 영역을 침범하지 않게 함 */
   width: 100% !important; 
-
   height: 80px;
   background-color: rgba(18, 18, 18, 0.95);
   backdrop-filter: blur(10px);
