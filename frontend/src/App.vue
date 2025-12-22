@@ -70,7 +70,7 @@ onMounted(() => {
 /* 네비게이션 바 */
 .nav-bar { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(14px); background: rgba(5,7,17,0.8); border-bottom: 1px solid rgba(255,255,255,0.05); }
 .nav-inner { max-width: 1120px; margin: 0 auto; padding: 0 20px; height: 64px; display: flex; align-items: center; justify-content: space-between; }
-.logo-image { height: 32px; display: block; }
+.logo-image { height: 64px; display: block; }
 
 /* 메뉴 */
 .nav-menu { display: flex; gap: 24px; font-weight: 500; font-size: 15px; }
