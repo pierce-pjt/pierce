@@ -198,6 +198,7 @@ const openTradeModal = (type) => {
 
 const executeTrade = async () => {
   if (tradeQuantity.value <= 0) return alert('수량을 입력해주세요.')
+  
   try {
     const res = await fetch('/api/transactions/', {
       method: 'POST',
@@ -210,13 +211,25 @@ const executeTrade = async () => {
         quantity: tradeQuantity.value 
       })
     })
-    if(res.ok) {
+
+    // ✅ 성공했을 때 (200~299)
+    if (res.ok) {
       alert(`${tradeType.value === 'BUY' ? '매수' : '매도'} 주문이 체결되었습니다!`)
       await authStore.fetchUser() 
       showTradeModal.value = false
       await fetchData() 
+    } 
+    // ❌ 에러가 발생했을 때 (400, 403 등)
+    else {
+      const errorData = await res.json()
+      // 백엔드의 raise PermissionDenied("메시지") 내용이 errorData.detail에 담깁니다.
+      alert(errorData.detail || '거래 처리 중 오류가 발생했습니다.')
     }
-  } catch (e) { console.error(e) }
+
+  } catch (e) { 
+    console.error("거래 통신 에러:", e)
+    alert('서버와 통신하는 중 문제가 발생했습니다.')
+  }
 }
 
 const formatPrice = (value) => value?.toLocaleString() || '0'

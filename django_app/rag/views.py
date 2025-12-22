@@ -12,7 +12,7 @@ from pgvector.django import CosineDistance
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 import yfinance as yf
-
+from django.db import transaction
 from datetime import timedelta
 import openai
 
@@ -570,6 +570,7 @@ class StockHoldingViewSet(viewsets.ModelViewSet):
         user = get_current_user(self.request)
         serializer.save(user=user)
 
+
 class TransactionViewSet(viewsets.ModelViewSet):
     queryset = Transaction.objects.all()
     serializer_class = TransactionSerializer
@@ -581,22 +582,61 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = get_current_user(self.request)
-        # 매수/매도 요청 데이터
+        
+        # 1. 요청 데이터 추출
         trade_type = serializer.validated_data.get('type')
         price = serializer.validated_data.get('price')
         quantity = serializer.validated_data.get('quantity')
+        company = serializer.validated_data.get('company')
         amount = price * quantity
 
-        if trade_type == 'BUY':
-            if user.mileage < amount:
-                raise PermissionDenied("마일리지가 부족합니다.")
-            user.mileage -= amount
-        elif trade_type == 'SELL':
-            # (보유 수량 체크 로직은 생략되었으나 실제론 필요함)
-            user.mileage += amount
-            
-        user.save() # 마일리지 업데이트 저장
-        serializer.save(user=user, amount=amount)
+        # 2. 원자적(Atomic) 처리: 마일리지와 잔고 업데이트를 한 번에 처리
+        with transaction.atomic():
+            if trade_type == 'BUY':
+                # [매수 검증] 마일리지 확인
+                if user.mileage < amount:
+                    raise PermissionDenied("마일리지가 부족합니다.")
+                
+                # 마일리지 차감
+                user.mileage -= amount
+                user.save()
+
+                # 보유 잔고(StockHolding) 업데이트
+                holding, created = StockHolding.objects.get_or_create(
+                    user=user, 
+                    company=company,
+                    defaults={'average_price': 0, 'quantity': 0}
+                )
+                
+                if created:
+                    holding.quantity = quantity
+                    holding.average_price = price
+                else:
+                    # 평단가 계산: (기존총액 + 신규총액) / 전체수량
+                    total_cost = (holding.average_price * holding.quantity) + amount
+                    holding.quantity += quantity
+                    holding.average_price = total_cost / holding.quantity
+                holding.save()
+
+            elif trade_type == 'SELL':
+                # [매도 검증] 실제 보유 중인지, 수량은 충분한지 확인
+                holding = StockHolding.objects.filter(user=user, company=company).first()
+                if not holding or holding.quantity < quantity:
+                    raise PermissionDenied("보유 수량이 부족하여 매도할 수 없습니다.")
+                
+                # 마일리지 증가
+                user.mileage += amount
+                user.save()
+
+                # 보유 잔고 업데이트
+                holding.quantity -= quantity
+                if holding.quantity == 0:
+                    holding.delete() # 전량 매도 시 레코드 삭제
+                else:
+                    holding.save()
+
+            # 3. 거래 내역 저장
+            serializer.save(user=user, amount=amount)
 
 # ========================================================
 # 2-1. Market Index ViewSet (KOSPI, KOSDAQ 전용)
