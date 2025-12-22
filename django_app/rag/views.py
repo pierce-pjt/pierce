@@ -117,7 +117,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_201_CREATED
             )
         
-        # 💥 [디버깅 추가] 서버 터미널에 정확한 에러 원인을 찍어줍니다.
         print("❌ 회원가입 실패 에러:", serializer.errors) 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -163,7 +162,6 @@ class UserViewSet(viewsets.ModelViewSet):
             })
 
         company_codes = [h.company_id for h in holdings]
-        # record_time 기준 최신 데이터 조회
         latest_prices = StockPrice.objects.filter(
             company_id__in=company_codes
         ).order_by('company', '-record_time').distinct('company')
@@ -247,9 +245,11 @@ class UserViewSet(viewsets.ModelViewSet):
                 "amount": float(t.amount)
             })
         return Response(data)
+
     @action(detail=True, methods=["get"], url_path="test")
     def test_action(self, request, pk=None):
         return Response({"message": "테스트 성공", "user_id": pk})
+
     @action(detail=False, methods=["get"], url_path="me/posts")
     def posts(self, request):
         user = get_current_user(request)
@@ -308,11 +308,10 @@ class UserViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=["get"], url_path="rank/top")
     def top_investors(self, request):
-        # 수익률 상위 5명 조회
         top_users = User.objects.all().order_by('-total_return_rate')[:5]
         return Response(UserReadSerializer(top_users, many=True).data)
     
-        # =================== 특정 유저의 포트폴리오 ===================
+    # =================== 특정 유저의 포트폴리오 ===================
 
     @action(detail=True, methods=["get"], url_path="portfolio-summary")
     def user_portfolio_summary(self, request, pk=None):
@@ -395,6 +394,7 @@ class UserViewSet(viewsets.ModelViewSet):
             })
             
         return Response(result)
+
     @action(detail=True, methods=["get"], url_path="transactions")
     def user_transactions(self, request, pk=None):
         target_user = self.get_object()
@@ -417,6 +417,7 @@ class UserViewSet(viewsets.ModelViewSet):
             })
         
         return Response(data)
+
     @action(detail=True, methods=["get"], url_path="followers")
     def user_followers(self, request, pk=None):
         target_user = self.get_object()
@@ -428,6 +429,8 @@ class UserViewSet(viewsets.ModelViewSet):
         target_user = self.get_object()
         users = [r.following for r in target_user.following.select_related('following')]
         return Response(UserReadSerializer(users, many=True, context={'request': request}).data)
+
+
 class PostViewSet(viewsets.ModelViewSet):
     queryset = Post.objects.all().select_related("author").annotate(
         comment_count=Count("comments", distinct=True),
@@ -488,7 +491,22 @@ class PostViewSet(viewsets.ModelViewSet):
             serializer.save(post=post, author=user)
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
-
+    
+    # 🆕 댓글 삭제 기능
+    @action(detail=False, methods=["delete"], url_path="comments/(?P<comment_id>[^/.]+)")
+    def delete_comment(self, request, comment_id=None, pk=None):
+        try:
+            comment = Comment.objects.get(id=comment_id)
+        except Comment.DoesNotExist:
+            return Response({"error": "댓글을 찾을 수 없습니다."}, status=404)
+        
+        if comment.author != get_current_user(request):
+            return Response({"error": "본인 댓글만 삭제 가능합니다."}, status=403)
+        
+        comment.delete()
+        return Response({"message": "삭제되었습니다."}, status=204)
+    
+    
 class FollowViewSet(viewsets.ModelViewSet):
     queryset = Follow.objects.all()
     serializer_class = FollowSerializer
