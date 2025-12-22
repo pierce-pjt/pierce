@@ -17,6 +17,7 @@ const posts = ref([])
 const loading = ref(true)
 const activeTab = ref('chart') 
 const tradeLogs = ref([])      
+const watchlist = ref([]) // 관심종목 ticker 배열
 
 // 📈 차트 데이터 상태
 const fullChartData = ref([]) 
@@ -24,6 +25,9 @@ const chartSeries = ref([])
 const activeRange = ref('1M') 
 
 // --- Computed ---
+
+// 관심종목 여부 확인
+const isWatched = computed(() => watchlist.value.includes(code))
 
 const priceColorClass = computed(() => {
   const rate = summary.value?.change_rate || 0
@@ -58,7 +62,7 @@ const chartOptions = computed(() => ({
     min: undefined,
     max: undefined,
     forceNiceScale: true,
-  }, // ✅ 여기에 쉼표가 누락되어 에러가 났었습니다.
+  },
   grid: { 
     borderColor: '#1a1a1b', 
     strokeDashArray: 2 
@@ -73,11 +77,51 @@ const chartOptions = computed(() => ({
 
 // --- 데이터 로직 ---
 
+// 관심종목 불러오기
+const fetchWatchlist = async () => {
+  if (!authStore.isAuthenticated) return
+  try {
+    const res = await fetch('/api/watchlist/', { credentials: 'include' })
+    if (res.ok) {
+      const data = await res.json()
+      const items = data.results || data 
+      if (Array.isArray(items)) {
+        watchlist.value = items.map(item => item.ticker)
+      }
+    }
+  } catch (e) {
+    console.error("관심종목 로드 실패", e)
+  }
+}
+
+// 관심종목 토글
+const toggleWatchlist = async () => {
+  if (!authStore.isAuthenticated) return alert('로그인이 필요합니다.')
+  try {
+    const res = await fetch('/api/watchlist/toggle/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ ticker: code })
+    })
+    
+    if (res.ok) {
+      const result = await res.json()
+      if (result.added) {
+        if (!watchlist.value.includes(code)) watchlist.value.push(code)
+      } else {
+        watchlist.value = watchlist.value.filter(c => c !== code)
+      }
+    }
+  } catch (e) {
+    console.error("관심종목 토글 실패", e)
+  }
+}
+
 const updateChartRange = (range) => {
   activeRange.value = range
   if (!fullChartData.value || fullChartData.value.length === 0) return
   
-  // 데이터 중 가장 최신 날짜를 기준으로 필터링
   const lastDate = Math.max(...fullChartData.value.map(d => d.x))
   let diff = 30 * 24 * 60 * 60 * 1000 
   if (range === '1W') diff = 7 * 24 * 60 * 60 * 1000
@@ -91,7 +135,6 @@ const fetchMyTransactions = async () => {
   if (!authStore.isAuthenticated) return
   try {
     const res = await mypageAPI.getTransactions()
-    // 💡 안전한 배열 처리: 데이터가 없거나 형식이 다를 경우 대비
     const allTrades = Array.isArray(res.data) ? res.data : []
     
     tradeLogs.value = allTrades
@@ -115,12 +158,9 @@ const fetchData = async () => {
     if (sumRes.ok) summary.value = await sumRes.json()
     if (feedRes.ok) posts.value = await feedRes.json()
 
-    // 차트 데이터 로드
     const chartRes = await fetch(`/api/stock-prices/chart/?ticker=${code}&days=365`, opt)
     if (chartRes.ok) {
       const json = await chartRes.json()
-      
-      // 💡 데이터가 배열 형태인지 확인 후 가공
       const rawData = Array.isArray(json) ? json : (json.results || [])
       
       if (rawData.length > 0) {
@@ -136,9 +176,7 @@ const fetchData = async () => {
         updateChartRange(activeRange.value)
       }
     }
-
     await fetchMyTransactions()
-    
   } catch(e) { 
     console.error("데이터 패칭 에러:", e) 
   } finally { 
@@ -185,8 +223,15 @@ const formatPrice = (value) => value?.toLocaleString() || '0'
 const formatDate = (dateStr) => dayjs(dateStr).format('MM.DD HH:mm')
 
 let polling = null
+
+// 인증 상태 변화 감시
+watch(() => authStore.isAuthenticated, (newVal) => {
+  if (newVal) fetchWatchlist()
+}, { immediate: true })
+
 onMounted(() => { 
   fetchData()
+  if (authStore.isAuthenticated) fetchWatchlist()
   polling = setInterval(fetchData, 10000) 
 })
 onUnmounted(() => { 
@@ -201,13 +246,16 @@ onUnmounted(() => {
         <button @click="router.back()" class="back-btn">〈</button>
         <div class="title-area">
           <div class="name-row">
+            <button class="star-btn" @click="toggleWatchlist">
+              {{ isWatched ? '★' : '☆' }}
+            </button>
             <h1 class="stock-title">{{ summary?.name || '로딩 중...' }}</h1>
             <span class="stock-code">{{ code }}</span>
             <div v-if="isHighVolatility" class="warning-badge">투자경고</div>
           </div>
           <div class="price-info" :class="priceColorClass">
             <span class="main-price">{{ formatPrice(summary?.last_price) }}원</span>
-            <span class="main-rate">{{ summary?.change_rate > 0 ? '+' : '' }}{{ summary?.change_rate }}%</span>
+            <span class="main-rate">{{ (summary?.change_rate || 0) > 0 ? '+' : '' }}{{ summary?.change_rate }}%</span>
           </div>
         </div>
       </div>
@@ -327,7 +375,6 @@ onUnmounted(() => {
   </div>
 </template>
 
-
 <style scoped>
 .dashboard-detail { background: #000; min-height: 100vh; color: #fff; padding: 0 20px 60px; font-family: sans-serif; }
 .detail-header { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; padding: 30px 0; }
@@ -335,10 +382,14 @@ onUnmounted(() => {
 /* 헤더 & 타이틀 */
 .header-left { display: flex; align-items: flex-start; gap: 20px; }
 .back-btn { background: none; border: none; color: #fff; font-size: 24px; cursor: pointer; padding-top: 5px; }
-.name-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px; }
+.name-row { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
 .stock-title { font-size: 28px; font-weight: bold; margin: 0; }
 .stock-code { color: #666; font-size: 16px; }
 .warning-badge { background: rgba(240, 68, 82, 0.15); color: #f04452; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: bold; border: 1px solid rgba(240, 68, 82, 0.3); }
+
+/* 별 아이콘 스타일 */
+.star-btn { background: none; border: none; color: #ff9d00; font-size: 24px; cursor: pointer; padding: 0; transition: transform 0.2s; line-height: 1; }
+.star-btn:hover { transform: scale(1.2); }
 
 /* 가격 정보 */
 .price-info { display: flex; align-items: baseline; gap: 12px; }
@@ -365,7 +416,7 @@ onUnmounted(() => {
 .range-tabs button { background: none; border: none; color: #666; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: bold; }
 .range-tabs button.active { background: #1a1a1b; color: #fff; }
 
-/* 우측 거래 내역 (마이페이지 스타일) */
+/* 우측 거래 내역 */
 .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .log-list { max-height: 600px; overflow-y: auto; }
 .log-item-v2 { padding: 15px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
@@ -377,12 +428,17 @@ onUnmounted(() => {
 .item-bottom { display: flex; justify-content: space-between; font-size: 14px; }
 .total-amount { font-weight: bold; }
 
+/* 커뮤니티 */
+.post-item { padding: 15px 0; border-bottom: 1px solid #333; }
+.post-meta { display: flex; gap: 10px; font-size: 13px; color: #999; margin-bottom: 5px; }
+.post-text { font-size: 15px; line-height: 1.5; margin: 0; }
+
 /* 모달 */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center; z-index: 2000; }
 .modal-content { background: #1a1a1b; padding: 40px; border-radius: 32px; width: 420px; border: 1px solid #333; }
-.input-group { display: flex; flex-direction: column; gap: 10px; }
+.input-group { display: flex; flex-direction: column; gap: 10px; margin: 20px 0; }
 .input-group input { background: #000; border: 1px solid #333; padding: 16px; border-radius: 16px; color: #fff; font-size: 22px; text-align: right; }
-.modal-footer { display: grid; grid-template-columns: 1fr 2fr; gap: 15px; }
+.modal-footer { display: grid; grid-template-columns: 1fr 2fr; gap: 15px; margin-top: 20px; }
 .btn-cancel { background: #333; border: none; color: #fff; padding: 16px; border-radius: 16px; cursor: pointer; font-weight: bold; }
 .btn-submit { border: none; color: #fff; font-weight: bold; border-radius: 16px; cursor: pointer; }
 
