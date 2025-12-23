@@ -230,7 +230,7 @@ onUnmounted(() => { if (pollingTimer) clearInterval(pollingTimer) })
 </template>
 
 <style scoped>
-.dashboard-wrapper { background: #000; color: #fff; min-height: 100vh; padding-bottom: 50px; font-family: sans-serif; }
+.dashboard-wrapper { background: #00000000; color: #fff; min-height: 100vh; padding-bottom: 50px; font-family: sans-serif; }
 .red { color: #f04452; }
 .blue { color: #3182f6; }
 
