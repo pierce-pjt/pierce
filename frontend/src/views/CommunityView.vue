@@ -42,7 +42,7 @@ const goToUserProfile = (userId) => {
   router.push(`/user/${userId}`);
 }
 
-// 📈 색상 결정 (0일 때 회색 처리)
+// 📈 수익 상태에 따른 색상 결정
 const getReturnColor = (val) => {
   const num = parseFloat(val)
   if (num > 0) return 'red'
@@ -50,14 +50,14 @@ const getReturnColor = (val) => {
   return 'grey'
 }
 
-// 🔢 % 포맷
+// 🔢 % 포맷 (기존 유지)
 const formatReturnRate = (val) => {
   if (val === undefined || val === null) return '0'
   const num = parseFloat(val)
   return num > 0 ? `+${num}` : num.toString()
 }
 
-// 💰 원화 포맷 (추가됨!)
+// 💰 금액 포맷 (천 단위 콤마)
 const formatPrice = (val) => {
   if (!val) return '0'
   return Math.floor(val).toLocaleString()
@@ -167,26 +167,25 @@ onMounted(fetchData)
       </div>
 
       <div v-for="post in posts" :key="post.id" class="post-card" @click="openDetail(post)">
-        <div class="post-meta">
-          <div class="user-info clickable-wrapper" @click.stop="goToUserProfile(post.author.id)">
+        <div class="post-header">
+          <div class="user-info-group clickable-wrapper" @click.stop="goToUserProfile(post.author.id)">
             <img :src="post.author.profile_image_url || '/default-profile.png'" class="avatar" />
-            <div>
-              <span class="nickname">{{ post.author.nickname }}</span>
-              <span class="return-rate" :class="getReturnColor(post.author.total_return_rate)">
-                실현 {{ formatReturnRate(post.author.total_return_rate) }}%
-              </span>
+            <div class="user-detail">
+              <div class="name-row">
+                <span class="nickname">{{ post.author.nickname }}</span>
+                <span class="profit-badge" :class="getReturnColor(post.author.realized_profit)">
+                  실현 {{ post.author.realized_profit > 0 ? '+' : '' }}{{ formatPrice(post.author.realized_profit) }}원
+                </span>
+              </div>
+              <span class="post-date">{{ new Date(post.created_at).toLocaleDateString() }}</span>
             </div>
           </div>
-          <span class="date">{{ new Date(post.created_at).toLocaleDateString() }}</span>
+          <span v-if="post.ticker" class="ticker-badge">{{ post.ticker }}</span>
         </div>
         
-        <h3>
-           <span v-if="post.ticker" class="ticker-badge">{{ post.ticker }}</span>
-           {{ post.title }}
-        </h3>
-        
-        <div class="post-content">
-          <p>
+        <div class="post-body">
+          <h3 class="post-title">{{ post.title }}</h3>
+          <p class="post-excerpt">
             {{ post.content.length > 100 ? post.content.slice(0, 100) + '...' : post.content }}
             <span v-if="post.content.length > 100" class="more-link">더 보기</span>
           </p>
@@ -196,7 +195,7 @@ onMounted(fetchData)
           <img :src="post.image_url" class="post-image" />
         </div>
 
-        <div class="post-actions">
+        <div class="post-footer">
            <button class="action-btn" :class="{ active: post.is_liked }" @click.stop="toggleLike(post, $event)">
              {{ post.is_liked ? '❤️' : '🤍' }} {{ post.like_count }}
            </button>
@@ -207,11 +206,11 @@ onMounted(fetchData)
 
     <aside class="sidebar">
       <div class="rank-card">
-        <h3>🏆 실현수익 상위 투자자</h3>
+        <h3>🏆 수익 TOP 투자자</h3>
         <ul class="rank-list">
           <li v-for="(user, idx) in topInvestors" :key="user.id" class="rank-item">
-            <span class="rank-num">{{ idx + 1 }}</span>
             <div class="rank-user clickable-wrapper" @click="goToUserProfile(user.id)">
+              <div class="rank-num">{{ idx + 1 }}</div>
               <img :src="user.profile_image_url || '/default-profile.png'" class="avatar-small" />
               <div class="rank-info">
                 <span class="rank-name">{{ getRankBadge(idx) }} {{ user.nickname }}</span>
@@ -255,9 +254,14 @@ onMounted(fetchData)
         <div class="detail-header">
            <div class="user-info clickable-wrapper" @click.stop="goToUserProfile(selectedPost.author.id)">
             <img :src="selectedPost.author.profile_image_url || '/default-profile.png'" class="avatar" />
-            <div>
-              <div class="nickname">{{ selectedPost.author.nickname }}</div>
-              <div class="date">{{ new Date(selectedPost.created_at).toLocaleString() }}</div>
+            <div class="user-detail">
+              <div class="name-row">
+                <span class="nickname">{{ selectedPost.author.nickname }}</span>
+                <span class="profit-badge" :class="getReturnColor(selectedPost.author.realized_profit)">
+                  {{ formatPrice(selectedPost.author.realized_profit) }}원
+                </span>
+              </div>
+              <div class="post-date">{{ new Date(selectedPost.created_at).toLocaleString() }}</div>
             </div>
           </div>
         </div>
@@ -293,66 +297,78 @@ onMounted(fetchData)
 </template>
 
 <style scoped>
-/* 기존 스타일 유지 및 추가 */
-.rank-profit-group { display: flex; align-items: center; gap: 8px; }
-.rank-amount { font-size: 12px; color: #888; }
-
-/* 🟢 수익률 색상 스타일 보강 */
-.red { color: #ff4d4d !important; } 
-.blue { color: #4d94ff !important; }
-.grey { color: #888 !important; }
-
-/* ... 나머지 기존 스타일 코드 ... */
-.clickable-wrapper { position: relative; cursor: pointer; transition: opacity 0.2s; pointer-events: auto !important; }
-.clickable-wrapper:hover { opacity: 0.8; }
-.clickable-wrapper > * { pointer-events: none; }
-.clickable-text { color: #60a5fa; font-weight: bold; cursor: pointer; }
-.clickable-text:hover { text-decoration: underline; }
-.community-layout { display: flex; gap: 40px; max-width: 1100px; margin: 0 auto; padding-top: 40px; color: #f5f5f7; }
+/* 🔴 레이아웃 및 공통 */
+.community-layout { display: flex; gap: 40px; max-width: 1100px; margin: 0 auto; padding: 40px 20px; color: #f5f5f7; }
 .feed-section { flex: 2; }
 .sidebar { flex: 1; display: none; }
 @media(min-width: 900px) { .sidebar { display: block; } }
+
+/* 🟠 헤더 영역 */
 .feed-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
-.header-text h2 { font-size: 28px; margin: 0 0 8px 0; }
+.header-text h2 { font-size: 28px; margin: 0 0 8px 0; font-weight: 800; }
 .subtitle { color: #9ca3af; font-size: 15px; margin: 0; }
-.write-btn { background: #2563eb; color: white; border: none; padding: 10px 24px; border-radius: 20px; font-weight: bold; cursor: pointer; transition: background 0.2s; white-space: nowrap; }
-.write-btn:hover { background: #1d4ed8; }
-.post-card { background: #141414; padding: 24px; border-radius: 16px; margin-bottom: 20px; border: 1px solid #222; cursor: pointer; transition: transform 0.2s; }
-.post-card:hover { transform: translateY(-2px); border-color: #3b82f6; }
-.user-info { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.avatar { width: 40px; height: 40px; border-radius: 50%; }
+.write-btn { background: #2563eb; color: white; border: none; padding: 10px 24px; border-radius: 24px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+.write-btn:hover { background: #1d4ed8; transform: scale(1.05); }
+
+/* 🟡 게시글 카드 (개선) */
+.post-card { background: #141414; padding: 24px; border-radius: 20px; margin-bottom: 24px; border: 1px solid #222; cursor: pointer; transition: 0.2s; }
+.post-card:hover { border-color: #3b82f6; background: #1a1a1a; }
+
+.post-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+.user-info-group { display: flex; align-items: center; gap: 12px; }
+.avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: #333; }
+.user-detail { display: flex; flex-direction: column; gap: 2px; }
+.name-row { display: flex; align-items: center; gap: 8px; }
 .nickname { font-weight: bold; font-size: 15px; }
-.return-rate { font-size: 12px; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.1); margin-left: 6px; border: 1px solid transparent; }
-.red { border-color: rgba(255, 77, 77, 0.3); }
-.blue { border-color: rgba(77, 148, 255, 0.3); }
-.post-meta { display: flex; justify-content: space-between; color: #888; font-size: 13px; align-items: center; }
-.post-content p { color: #d1d5db; line-height: 1.6; margin: 12px 0; }
-.more-link { color: #60a5fa; font-weight: bold; margin-left: 8px; font-size: 14px; }
-.ticker-badge { font-size: 12px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 2px 6px; border-radius: 4px; vertical-align: middle; margin-right: 6px; }
-.post-image-wrapper { margin-top: 12px; border-radius: 12px; overflow: hidden; }
-.post-image { width: 100%; max-height: 400px; object-fit: cover; display: block; }
-.post-actions { display: flex; gap: 16px; margin-top: 16px; color: #9ca3af; font-size: 14px; }
-.action-btn { background: none; border: none; color: inherit; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 4px; }
-.action-btn.active { color: #ef4444; }
-.rank-card { background: #1a1a1a; padding: 24px; border-radius: 16px; position: sticky; top: 100px; border: 1px solid #222; }
-.rank-list { list-style: none; padding: 0; margin-top: 20px; }
-.rank-item { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.rank-user { display: flex; align-items: center; gap: 12px; flex: 1; }
-.avatar-small { width: 44px; height: 44px; border-radius: 50%; }
-.rank-info { display: flex; flex-direction: column; font-size: 14px; }
-.rank-name { font-weight: bold; }
-.rank-rate { font-size: 13px; font-weight: bold; }
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 100; backdrop-filter: blur(4px); }
-.modal-content { background: #1f2937; padding: 32px; border-radius: 20px; color: #f5f5f7; box-shadow: 0 20px 50px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
-.write-modal { width: 90%; max-width: 800px; max-height: 90vh; }
-.input-full { width: 100%; background: #111827; border: 1px solid #374151; color: white; padding: 14px; border-radius: 12px; box-sizing: border-box; font-size: 16px; }
-.textarea-full { width: 100%; height: 300px; background: #111827; border: 1px solid #374151; color: white; padding: 14px; border-radius: 12px; resize: none; box-sizing: border-box; font-size: 16px; line-height: 1.6; }
-.submit-btn { background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer; font-size: 16px; }
-.cancel-btn { background: #374151; color: white; border: none; padding: 12px 24px; border-radius: 12px; cursor: pointer; font-size: 16px; }
-.detail-modal { width: 90%; max-width: 700px; max-height: 90vh; overflow-y: auto; }
-.comment-item { background: #111827; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-size: 14px; }
-.comment-input-area { display: flex; gap: 10px; margin-top: 20px; }
-.comment-input-area input { flex: 1; background: #111827; border: 1px solid #374151; color: white; padding: 12px; border-radius: 8px; }
-.comment-input-area button { background: #3b82f6; color: white; border: none; padding: 0 20px; border-radius: 8px; cursor: pointer; }
-.divider { border: 0; border-top: 1px solid #374151; margin: 20px 0; }
+
+/* 수익 뱃지 */
+.profit-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.05); }
+.profit-badge.red { color: #ff4d4d; background: rgba(255, 77, 77, 0.1); }
+.profit-badge.blue { color: #4d94ff; background: rgba(77, 148, 255, 0.1); }
+.profit-badge.grey { color: #888; background: rgba(136, 136, 136, 0.1); }
+
+.post-date { font-size: 12px; color: #6b7280; }
+.ticker-badge { font-size: 11px; background: rgba(59, 130, 246, 0.15); color: #60a5fa; padding: 4px 10px; border-radius: 8px; font-weight: 600; }
+
+.post-title { font-size: 19px; font-weight: 700; margin: 0 0 10px 0; color: #f9fafb; }
+.post-excerpt { font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 12px; }
+.more-link { color: #3b82f6; font-weight: 600; margin-left: 4px; }
+
+.post-image-wrapper { margin: 16px 0; border-radius: 12px; overflow: hidden; border: 1px solid #222; }
+.post-image { width: 100%; max-height: 450px; object-fit: cover; display: block; }
+
+.post-footer { display: flex; align-items: center; gap: 20px; padding-top: 16px; border-top: 1px solid #222; color: #9ca3af; font-size: 14px; }
+.action-btn { background: none; border: none; color: inherit; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 0; }
+.action-btn.active { color: #ef4444; font-weight: bold; }
+
+/* 🟢 사이드바 랭킹 */
+.rank-card { background: #141414; padding: 24px; border-radius: 20px; position: sticky; top: 100px; border: 1px solid #222; }
+.rank-card h3 { margin: 0 0 20px 0; font-size: 18px; }
+.rank-list { list-style: none; padding: 0; }
+.rank-item { margin-bottom: 18px; }
+.rank-user { display: flex; align-items: center; gap: 12px; }
+.rank-num { width: 20px; font-weight: 800; color: #4b5563; font-style: italic; }
+.avatar-small { width: 40px; height: 40px; border-radius: 50%; }
+.rank-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.rank-profit-group { display: flex; align-items: center; gap: 8px; }
+.rank-rate { font-size: 12px; font-weight: bold; }
+.rank-amount { font-size: 12px; color: #9ca3af; }
+
+/* 🔵 모달 및 기타 */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center; z-index: 1000; backdrop-filter: blur(8px); }
+.modal-content { background: #1c1c1e; padding: 32px; border-radius: 24px; color: #f5f5f7; border: 1px solid #333; max-height: 90vh; overflow-y: auto; }
+.write-modal { width: 90%; max-width: 600px; }
+.detail-modal { width: 90%; max-width: 700px; }
+
+.input-full, .textarea-full { width: 100%; background: #000; border: 1px solid #333; color: white; padding: 14px; border-radius: 12px; margin-bottom: 12px; box-sizing: border-box; }
+.textarea-full { height: 200px; resize: none; }
+
+.submit-btn { background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer; }
+.cancel-btn { background: #333; color: white; border: none; padding: 12px 24px; border-radius: 12px; cursor: pointer; margin-right: 8px; }
+
+.clickable-wrapper { cursor: pointer; transition: opacity 0.2s; }
+.clickable-wrapper:hover { opacity: 0.7; }
+.red { color: #ff4d4d !important; } 
+.blue { color: #4d94ff !important; }
+.grey { color: #888 !important; }
 </style>
