@@ -5,11 +5,10 @@ import { useAuthStore } from '@/stores/auth'
 import logoImg from '@/assets/logo.png' 
 
 const route = useRoute()
-const router = useRouter() // 1. 라우터 인스턴스 생성
+const router = useRouter()
 const authStore = useAuthStore()
 const isActive = (name) => route.name === name
 
-// 2. 마이페이지 이동 함수
 const goToMyPage = () => {
   router.push({ name: 'mypage' })
 }
@@ -29,16 +28,16 @@ onMounted(() => {
 
         <nav class="nav-menu">
           <RouterLink :to="{ name: 'dashboard' }" class="nav-item" :class="{ active: isActive('dashboard') }">
-            홈
+            HOME
           </RouterLink>
           <RouterLink :to="{ name: 'news' }" class="nav-item" :class="{ active: isActive('news') }">
-            뉴스
+            NEWS
           </RouterLink>
           <RouterLink :to="{ name: 'community' }" class="nav-item" :class="{ active: isActive('community') }">
-            커뮤니티
+            COMMUNITY
           </RouterLink>
           <RouterLink :to="{ name: 'mypage' }" class="nav-item" :class="{ active: isActive('mypage') }">
-            마이
+            MYPAGE
           </RouterLink>
         </nav>
 
@@ -47,12 +46,12 @@ onMounted(() => {
             <div class="user-profile" @click="goToMyPage">
               <img :src="authStore.user.profile_image_url || '/default-profile.png'" class="user-avatar" />
               <span class="user-name">{{ authStore.user.nickname }}</span>
-              <button @click.stop="authStore.logout" class="logout-link">로그아웃</button>
+              <button @click.stop="authStore.logout" class="logout-link">LOGOUT</button>
             </div>
           </template>
           <template v-else>
             <RouterLink :to="{ name: 'login' }">
-              <button class="login-btn">로그인</button>
+              <button class="login-btn">LOGIN</button>
             </RouterLink>
           </template>
         </div>
@@ -62,50 +61,175 @@ onMounted(() => {
     <main :class="route.name === 'landing' ? 'main-full' : 'main-area'">
       <RouterView />
     </main>
-  </div> </template>
+  </div>
+</template>
 
 <style scoped>
-.app { min-height: 100vh; background: #050711; color: #f5f5f7; font-family: system-ui, sans-serif; }
+.app { 
+  min-height: 100vh; 
+  background: #050711; 
+  color: #f5f5f7; 
+  font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
 
 /* 네비게이션 바 */
-.nav-bar { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(14px); background: rgba(5,7,17,0.8); border-bottom: 1px solid rgba(255,255,255,0.05); }
-.nav-inner { max-width: 1120px; margin: 0 auto; padding: 0 20px; height: 64px; display: flex; align-items: center; justify-content: space-between; }
-.logo-image { height: 64px; display: block; }
+.nav-bar { 
+  position: sticky; 
+  top: 0; 
+  z-index: 20; 
+  backdrop-filter: blur(14px); 
+  background: rgba(5,7,17,0.8); 
+  border-bottom: 1px solid rgba(255,255,255,0.05); 
+}
 
-/* 메뉴 */
-.nav-menu { display: flex; gap: 24px; font-weight: 500; font-size: 15px; }
-.nav-item { color: #9ca3af; text-decoration: none; padding: 6px 0; position: relative; }
-.nav-item:hover, .nav-item.active { color: #fff; }
-.nav-item.active::after { content: ''; position: absolute; bottom: -21px; left: -4px; right: -4px; height: 2px; background: #3b82f6; }
+.nav-inner { 
+  max-width: 1120px; 
+  margin: 0 auto; 
+  padding: 0 20px; 
+  height: 68px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 20px;
+}
+
+.logo-link {
+  justify-self: start;
+}
+
+.logo-image { 
+  height: 64px; 
+  display: block; 
+}
+
+/* 메뉴 - 정중앙 배치 */
+.nav-menu { 
+  display: flex; 
+  gap: 32px;
+  font-weight: 600;
+  font-size: 16px;
+  font-family: 'Noto Sans KR', sans-serif;
+  justify-self: center;
+}
+
+.nav-item { 
+  color: #9ca3af; 
+  text-decoration: none; 
+  padding: 8px 0; 
+  position: relative;
+  transition: color 0.2s;
+  white-space: nowrap;
+}
+
+.nav-item:hover, .nav-item.active { 
+  color: #fff; 
+}
+
+.nav-item.active::after { 
+  content: ''; 
+  position: absolute; 
+  bottom: -22px; 
+  left: -4px; 
+  right: -4px; 
+  height: 2px; 
+  background: #3b82f6; 
+}
+
+/* 인증 영역 - 오른쪽 끝 배치 */
+.auth-area {
+  justify-self: end;
+}
 
 /* 로그인 버튼 */
-.login-btn { background: #2563eb; color: white; border: none; padding: 7px 18px; border-radius: 99px; font-weight: 600; cursor: pointer; }
+.login-btn { 
+  background: #2563eb; 
+  color: white; 
+  border: none; 
+  padding: 9px 20px; 
+  border-radius: 99px; 
+  font-weight: 600; 
+  font-size: 14px;
+  cursor: pointer;
+  font-family: 'Noto Sans KR', sans-serif;
+  transition: background 0.2s;
+}
 
-/* 프로필 영역: 커서 포인터 추가 */
-.user-profile { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-.user-avatar { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #3b82f6; }
-.user-name { font-weight: 600; font-size: 14px; }
-.logout-link { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 13px; }
-.logout-link:hover { color: #ef4444; }
+.login-btn:hover {
+  background: #1d4ed8;
+}
+
+/* 프로필 영역 */
+.user-profile { 
+  display: flex; 
+  align-items: center; 
+  gap: 12px; 
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 12px;
+  transition: background 0.2s;
+}
+
+.user-profile:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.user-avatar { 
+  width: 36px; 
+  height: 36px; 
+  border-radius: 50%; 
+  border: 2px solid #3b82f6; 
+}
+
+.user-name { 
+  font-weight: 600; 
+  font-size: 15px;
+  font-family: 'Noto Sans KR', sans-serif;
+}
+
+.logout-link { 
+  background: none; 
+  border: none; 
+  color: #9ca3af; 
+  cursor: pointer; 
+  font-size: 14px;
+  font-family: 'Noto Sans KR', sans-serif;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.logout-link:hover { 
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
 
 /* 메인 영역 스타일 */
-.main-area { max-width: 1120px; margin: 0 auto; padding: 32px 20px 60px; }
-.main-full { width: 100%; padding: 0; margin: 0; }
+.main-area { 
+  max-width: 1120px; 
+  margin: 0 auto; 
+  padding: 32px 20px 60px; 
+}
+
+.main-full { 
+  width: 100%; 
+  padding: 0; 
+  margin: 0; 
+}
 </style>
 
 <style>
-/* 👇 [핵심 수정] html뿐만 아니라 Vuetify의 메인 래퍼(wrapper)까지 스크롤바 공간 강제 확보 */
+/* 스크롤바 공간 강제 확보 */
 html, body, .v-application, .v-application__wrap {
   overflow-y: scroll !important; 
 }
 
-/* 폰트 및 배경 설정 */
+/* 폰트 통일 */
 :root, body, .v-application {
-  font-family: 'Noto Sans KR', sans-serif !important;
-  background-color: #121212; /* 배경색 유지 */
+  font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif !important;
+  background-color: #121212;
 }
 
-/* (선택사항) 스크롤바 디자인 */
+/* 스크롤바 디자인 */
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: #1e1e1e; }
 ::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
