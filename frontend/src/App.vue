@@ -83,7 +83,7 @@ onMounted(() => {
 }
 
 .nav-inner { 
-  max-width: 1120px; 
+  max-width: 2000px; 
   margin: 0 auto; 
   padding: 0 20px; 
   height: 68px;
@@ -205,7 +205,7 @@ onMounted(() => {
 
 /* 메인 영역 스타일 */
 .main-area { 
-  max-width: 1120px; 
+  max-width: 2000px; 
   margin: 0 auto; 
   padding: 32px 20px 60px; 
 }

@@ -1,5 +1,5 @@
 <template>
-  <v-container class="py-10" style="max-width: 1200px;">
+  <v-container class="py-10" style="max-width: 1600px;">
     
     <!-- 로딩 -->
     <div v-if="loading" class="d-flex justify-center my-10">

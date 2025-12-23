@@ -18,6 +18,10 @@ import yfinance as yf
 from django.db import transaction
 from datetime import timedelta
 import openai
+import pandas as pd
+import numpy as np
+
+
 
 from .utils import get_embedding, update_similarity_score
 
@@ -553,12 +557,10 @@ class CompanyViewSet(viewsets.ReadOnlyModelViewSet):
             # 거래대금 계산: 두 필드를 모두 Float로 형변환 후 곱셈 (Postgres 호환성 최적화)
             trading_value=Cast(F('curr_price'), FloatField()) * Cast(F('curr_volume'), FloatField())
         ).order_by('-trading_value', 'name')
-
 class StockPriceViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = StockPrice.objects.all().order_by('-record_time')
     serializer_class = StockPriceSerializer
 
-    # 1. 기본 리스트 호출 시 404 방지 및 필터링 기능 추가
     def get_queryset(self):
         queryset = StockPrice.objects.all().order_by('-record_time')
         ticker = self.request.query_params.get('ticker')
@@ -601,19 +603,84 @@ class StockPriceViewSet(viewsets.ReadOnlyModelViewSet):
         ticker = request.query_params.get('ticker')
         days = int(request.query_params.get('days', 30))
         
-        # ✅ 캔들차트에 필요한 OHLC(Open, High, Low, Close) 데이터를 모두 포함
         data = StockPrice.objects.filter(company_id=ticker).order_by('-record_time')[:days]
         
         results = [
             {
                 "date": d.record_time.strftime("%Y-%m-%d"),
-                "open": d.open,   # 추가
-                "high": d.high,   # 추가
-                "low": d.low,     # 추가
-                "close": d.close
+                "open": d.open,
+                "high": d.high,
+                "low": d.low,
+                "close": d.close,
+                "volume": d.volume
             } 
             for d in reversed(data)
         ]
+        return Response(results)
+
+    # 🆕 이동평균선 계산 API
+    @action(detail=False, methods=['get'], url_path='moving-averages')
+    def moving_averages(self, request):
+        ticker = request.query_params.get('ticker')
+        days = int(request.query_params.get('days', 365))
+        
+        if not ticker:
+            return Response({"error": "Ticker is required"}, status=400)
+        
+        # 1. DB 조회 최적화 (필요한 필드만 가져오기)
+        prices = StockPrice.objects.filter(
+            company_id=ticker
+        ).order_by('record_time')[:days]
+        
+        if not prices.exists():
+            return Response({"error": "No data found"}, status=404)
+        
+        # 2. DataFrame 변환
+        df = pd.DataFrame(list(prices.values('record_time', 'open', 'high', 'low', 'close', 'volume')))
+        df['date'] = df['record_time'].dt.strftime('%Y-%m-%d')
+        
+        # 3. 이동평균선 계산 (벡터화 연산)
+        df['ma5'] = df['close'].rolling(window=5, min_periods=1).mean()
+        df['ma20'] = df['close'].rolling(window=20, min_periods=1).mean()
+        df['ma60'] = df['close'].rolling(window=60, min_periods=1).mean()
+        
+        # 4. 🔥 핵심 최적화: iterrows 삭제 및 NaN 처리
+        # JSON은 NaN을 인식하지 못하므로 None(null)으로 변환합니다.
+        df = df.replace({np.nan: None})
+        results = df.to_dict('records')
+        
+        return Response(results)
+
+    @action(detail=False, methods=['get'], url_path='bollinger-bands')
+    def bollinger_bands(self, request):
+        ticker = request.query_params.get('ticker')
+        days = int(request.query_params.get('days', 365))
+        period = int(request.query_params.get('period', 20))
+        std_dev = float(request.query_params.get('std_dev', 2))
+        
+        if not ticker:
+            return Response({"error": "Ticker is required"}, status=400)
+        
+        prices = StockPrice.objects.filter(
+            company_id=ticker
+        ).order_by('record_time')[:days]
+        
+        if not prices.exists():
+            return Response({"error": "No data found"}, status=404)
+        
+        df = pd.DataFrame(list(prices.values('record_time', 'open', 'high', 'low', 'close', 'volume')))
+        df['date'] = df['record_time'].dt.strftime('%Y-%m-%d')
+        
+        # 볼린저 밴드 계산
+        df['sma'] = df['close'].rolling(window=period, min_periods=1).mean()
+        df['std'] = df['close'].rolling(window=period, min_periods=1).std()
+        df['upper_band'] = df['sma'] + (df['std'] * std_dev)
+        df['lower_band'] = df['sma'] - (df['std'] * std_dev)
+        
+        # 🔥 핵심 최적화: iterrows 삭제 및 NaN 처리
+        df = df.replace({np.nan: None})
+        results = df.to_dict('records')
+        
         return Response(results)
 
 class StockHoldingViewSet(viewsets.ModelViewSet):

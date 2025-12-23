@@ -21,8 +21,17 @@ const watchlist = ref([])
 
 // 📈 차트 데이터 상태
 const fullChartData = ref([]) 
+const fullMAData = ref([]) // 🆕 전체 MA 데이터 저장
+const fullBollingerData = ref([]) // 🆕 전체 볼린저 데이터 저장
 const chartSeries = ref([])   
-const activeRange = ref('1M') 
+const activeRange = ref('1M')
+const activeIndicator = ref('none')
+const volumeSeries = ref([])
+const maSeries = ref([])
+const bollingerSeries = ref([])
+
+// 🆕 로딩 상태
+const indicatorLoading = ref(false)
 
 // --- Computed ---
 const isWatched = computed(() => watchlist.value.includes(code))
@@ -36,7 +45,21 @@ const priceColorClass = computed(() => {
 
 const isHighVolatility = computed(() => Math.abs(summary.value?.change_rate || 0) >= 5.0)
 
-// ✅ 차트 옵션 설정
+const getTickAmount = () => {
+  if (!fullChartData.value.length) return 10
+
+  const firstDate = dayjs(fullChartData.value[0].date)
+  const lastDate = dayjs(fullChartData.value[fullChartData.value.length - 1].date)
+  const daysDiff = lastDate.diff(firstDate, 'day')
+
+  if (daysDiff <= 7) return 7
+  else if (daysDiff <= 30) return 10
+  else if (daysDiff <= 90) return 12
+  else if (daysDiff <= 365) return 12
+  else return 10
+}
+
+// ✅ 메인 차트 옵션
 const chartOptions = computed(() => ({
   chart: {
     type: 'candlestick',
@@ -49,8 +72,15 @@ const chartOptions = computed(() => ({
     type: 'category', 
     labels: { 
       style: { colors: '#777', fontSize: '11px' },
-      formatter: (val) => val
+      formatter: (val) => val,
+      rotate: -45,
+      rotateAlways: false,
+      hideOverlappingLabels: true,
+      trim: true,
+      maxHeight: 120
     },
+    tickAmount: getTickAmount(),
+    tickPlacement: 'on',
     axisBorder: { show: false },
     tooltip: { enabled: false }
   },
@@ -72,11 +102,337 @@ const chartOptions = computed(() => ({
       colors: { upward: '#f04452', downward: '#3182f6' },
       wick: { useFillColor: true }
     }
+  },
+  tooltip: {
+    theme: 'dark',
+    x: { 
+      format: 'yyyy-MM-dd'
+    },
+    y: {
+      formatter: (val) => val?.toLocaleString() + '원'
+    }
   }
 }))
 
-// --- 데이터 로직 ---
+// 이동평균선 차트 옵션
+const maChartOptions = computed(() => ({
+  ...chartOptions.value,
+  stroke: {
+    width: [1, 2, 2, 2],
+    dashArray: [0, 0, 0, 0]
+  },
+  colors: ['#f04452', '#fbbf24', '#10b981', '#3182f6'],
+  legend: {
+    show: true,
+    position: 'top',
+    horizontalAlign: 'left',
+    labels: { colors: '#999' }
+  }
+}))
 
+// 거래량 차트 옵션
+const volumeChartOptions = computed(() => ({
+  chart: {
+    type: 'bar',
+    background: 'transparent',
+    toolbar: { show: false },
+    height: 120
+  },
+  theme: { mode: 'dark' },
+  xaxis: {
+    type: 'category',
+    labels: { show: false },
+    axisBorder: { show: false }
+  },
+  yaxis: {
+    opposite: true,
+    labels: {
+      style: { colors: '#777', fontSize: '10px' },
+      formatter: (val) => (val / 1000).toFixed(0) + 'K'
+    }
+  },
+  plotOptions: {
+    bar: {
+      colors: {
+        ranges: [{
+          from: 0,
+          to: Infinity,
+          color: '#f04452'
+        }]
+      }
+    }
+  },
+  grid: { 
+    borderColor: '#222', 
+    strokeDashArray: 4,
+    yaxis: { lines: { show: true } }
+  },
+  dataLabels: { enabled: false },
+  tooltip: {
+    theme: 'dark',
+    y: { formatter: (val) => val?.toLocaleString() }
+  }
+}))
+
+// 볼린저 밴드 차트 옵션
+const bollingerChartOptions = computed(() => ({
+  ...chartOptions.value,
+  stroke: {
+    width: [1, 2, 2, 2],
+    dashArray: [0, 5, 0, 5]
+  },
+  colors: ['#f04452', '#999', '#3182f6', '#999'],
+  legend: {
+    show: true,
+    position: 'top',
+    horizontalAlign: 'left',
+    labels: { colors: '#999' }
+  }
+}))
+
+// 🆕 필터링 헬퍼
+const filterDataByRange = (data, range) => {
+  if (!data || !data.length) return []
+  
+  const lastDataDate = dayjs(data[data.length - 1].date)
+  let startDate
+  if (range === '1W') startDate = lastDataDate.subtract(7, 'day')
+  else if (range === '1M') startDate = lastDataDate.subtract(1, 'month')
+  else if (range === '1Y') startDate = lastDataDate.subtract(1, 'year')
+  
+  return data.filter(d => dayjs(d.date).isAfter(startDate) || dayjs(d.date).isSame(startDate))
+}
+
+// 🆕 거래량 계산
+const calculateVolume = (data) => {
+  volumeSeries.value = [{
+    name: '거래량',
+    data: data.map(d => ({ x: dayjs(d.date).format('MM/DD'), y: d.volume || 0 }))
+  }]
+}
+
+// 🆕 이동평균선 데이터 가져오기
+const fetchMA = async () => {
+  indicatorLoading.value = true
+  try {
+    const res = await fetch(`/api/stock-prices/moving-averages/?ticker=${code}&days=365`, { 
+      credentials: 'include' 
+    })
+    
+    if (!res.ok) throw new Error('MA fetch failed')
+    
+    const data = await res.json()
+    console.log('MA data received:', data.length, 'items') // 🔍 디버깅
+    
+    fullMAData.value = data // 전체 데이터 저장
+    
+    // 기간 필터링
+    const filtered = filterDataByRange(data, activeRange.value)
+    console.log('Filtered MA data:', filtered.length, 'items') // 🔍 디버깅
+    
+    if (filtered.length === 0) {
+      console.error('No data after filtering!')
+      return
+    }
+    
+    maSeries.value = [
+      { 
+        name: '가격', 
+        type: 'candlestick',
+        data: filtered.map(d => ({
+          x: dayjs(d.date).format('MM/DD'),
+          y: [d.open, d.high, d.low, d.close]
+        }))
+      },
+      { 
+        name: 'MA(5)', 
+        type: 'line',
+        data: filtered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.ma5 
+        })).filter(d => d.y !== null)
+      },
+      { 
+        name: 'MA(20)', 
+        type: 'line',
+        data: filtered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.ma20 
+        })).filter(d => d.y !== null)
+      },
+      { 
+        name: 'MA(60)', 
+        type: 'line',
+        data: filtered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.ma60 
+        })).filter(d => d.y !== null)
+      }
+    ]
+    
+    console.log('MA series:', maSeries.value) // 🔍 디버깅
+  } catch (e) {
+    console.error("이동평균선 로드 실패:", e)
+  } finally {
+    indicatorLoading.value = false
+  }
+}
+
+// 🆕 볼린저 밴드 데이터 가져오기
+const fetchBollinger = async () => {
+  indicatorLoading.value = true
+  try {
+    const res = await fetch(`/api/stock-prices/bollinger-bands/?ticker=${code}&days=365`, { 
+      credentials: 'include' 
+    })
+    
+    if (!res.ok) throw new Error('Bollinger fetch failed')
+    
+    const data = await res.json()
+    console.log('Bollinger data received:', data.length, 'items') // 🔍 디버깅
+    
+    fullBollingerData.value = data // 전체 데이터 저장
+    
+    // 기간 필터링
+    const filtered = filterDataByRange(data, activeRange.value)
+    console.log('Filtered Bollinger data:', filtered.length, 'items') // 🔍 디버깅
+    
+    if (filtered.length === 0) {
+      console.error('No data after filtering!')
+      return
+    }
+    
+    bollingerSeries.value = [
+      { 
+        name: '가격', 
+        type: 'candlestick',
+        data: filtered.map(d => ({
+          x: dayjs(d.date).format('MM/DD'),
+          y: [d.open, d.high, d.low, d.close]
+        }))
+      },
+      { 
+        name: '상단 밴드', 
+        type: 'line',
+        data: filtered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.upper_band 
+        })).filter(d => d.y !== null)
+      },
+      { 
+        name: '중심선 (SMA)', 
+        type: 'line',
+        data: filtered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.sma 
+        })).filter(d => d.y !== null)
+      },
+      { 
+        name: '하단 밴드', 
+        type: 'line',
+        data: filtered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.lower_band 
+        })).filter(d => d.y !== null)
+      }
+    ]
+    
+    console.log('Bollinger series:', bollingerSeries.value) // 🔍 디버깅
+  } catch (e) {
+    console.error("볼린저 밴드 로드 실패:", e)
+  } finally {
+    indicatorLoading.value = false
+  }
+}
+
+// 🆕 지표 변경 감지
+watch(activeIndicator, (newIndicator) => {
+  if (newIndicator === 'ma') {
+    if (fullMAData.value.length > 0) {
+      // 이미 데이터가 있으면 필터링만
+      const filtered = filterDataByRange(fullMAData.value, activeRange.value)
+      maSeries.value = [
+        { 
+          name: '가격', 
+          type: 'candlestick',
+          data: filtered.map(d => ({
+            x: dayjs(d.date).format('MM/DD'),
+            y: [d.open, d.high, d.low, d.close]
+          }))
+        },
+        { 
+          name: 'MA(5)', 
+          type: 'line',
+          data: filtered.map(d => ({ 
+            x: dayjs(d.date).format('MM/DD'), 
+            y: d.ma5 
+          })).filter(d => d.y !== null)
+        },
+        { 
+          name: 'MA(20)', 
+          type: 'line',
+          data: filtered.map(d => ({ 
+            x: dayjs(d.date).format('MM/DD'), 
+            y: d.ma20 
+          })).filter(d => d.y !== null)
+        },
+        { 
+          name: 'MA(60)', 
+          type: 'line',
+          data: filtered.map(d => ({ 
+            x: dayjs(d.date).format('MM/DD'), 
+            y: d.ma60 
+          })).filter(d => d.y !== null)
+        }
+      ]
+    } else {
+      fetchMA()
+    }
+  } else if (newIndicator === 'bollinger') {
+    if (fullBollingerData.value.length > 0) {
+      // 이미 데이터가 있으면 필터링만
+      const filtered = filterDataByRange(fullBollingerData.value, activeRange.value)
+      bollingerSeries.value = [
+        { 
+          name: '가격', 
+          type: 'candlestick',
+          data: filtered.map(d => ({
+            x: dayjs(d.date).format('MM/DD'),
+            y: [d.open, d.high, d.low, d.close]
+          }))
+        },
+        { 
+          name: '상단 밴드', 
+          type: 'line',
+          data: filtered.map(d => ({ 
+            x: dayjs(d.date).format('MM/DD'), 
+            y: d.upper_band 
+          })).filter(d => d.y !== null)
+        },
+        { 
+          name: '중심선 (SMA)', 
+          type: 'line',
+          data: filtered.map(d => ({ 
+            x: dayjs(d.date).format('MM/DD'), 
+            y: d.sma 
+          })).filter(d => d.y !== null)
+        },
+        { 
+          name: '하단 밴드', 
+          type: 'line',
+          data: filtered.map(d => ({ 
+            x: dayjs(d.date).format('MM/DD'), 
+            y: d.lower_band 
+          })).filter(d => d.y !== null)
+        }
+      ]
+    } else {
+      fetchBollinger()
+    }
+  }
+})
+
+// --- 데이터 로직 ---
 const fetchWatchlist = async () => {
   if (!authStore.isAuthenticated) return
   try {
@@ -109,21 +465,99 @@ const toggleWatchlist = async () => {
   } catch (e) { console.error("관심종목 토글 실패", e) }
 }
 
-const updateChartRange = (range) => {
+// 기간 변경
+const updateChartRange = async (range) => {
   activeRange.value = range
   if (!fullChartData.value.length) return
   
-  const lastDataDate = dayjs(fullChartData.value[fullChartData.value.length - 1].rawDate)
-  let startDate
-  if (range === '1W') startDate = lastDataDate.subtract(7, 'day')
-  else if (range === '1M') startDate = lastDataDate.subtract(1, 'month')
-  else if (range === '1Y') startDate = lastDataDate.subtract(1, 'year')
+  // 기본 차트 데이터 필터링
+  const filtered = filterDataByRange(fullChartData.value, range)
   
-  const filtered = fullChartData.value
-    .filter(d => dayjs(d.rawDate).isAfter(startDate) || dayjs(d.rawDate).isSame(startDate))
-    .map(d => ({ x: dayjs(d.rawDate).format('MM/DD'), y: d.y }))
-    
-  chartSeries.value = [{ name: '주가', data: filtered }]
+  chartSeries.value = [{
+    name: '주가',
+    data: filtered.map(d => ({
+      x: dayjs(d.date).format('MM/DD'),
+      y: [d.open, d.high, d.low, d.close]
+    }))
+  }]
+  
+  // 거래량 계산
+  calculateVolume(filtered)
+  
+  // 🆕 현재 활성화된 지표가 있으면 다시 필터링
+  if (activeIndicator.value === 'ma' && fullMAData.value.length > 0) {
+    const maFiltered = filterDataByRange(fullMAData.value, range)
+    maSeries.value = [
+      { 
+        name: '가격', 
+        type: 'candlestick',
+        data: maFiltered.map(d => ({
+          x: dayjs(d.date).format('MM/DD'),
+          y: [d.open, d.high, d.low, d.close]
+        }))
+      },
+      { 
+        name: 'MA(5)', 
+        type: 'line',
+        data: maFiltered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.ma5 
+        })).filter(d => d.y !== null)
+      },
+      { 
+        name: 'MA(20)', 
+        type: 'line',
+        data: maFiltered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.ma20 
+        })).filter(d => d.y !== null)
+      },
+      { 
+        name: 'MA(60)', 
+        type: 'line',
+        data: maFiltered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.ma60 
+        })).filter(d => d.y !== null)
+      }
+    ]
+  } else if (activeIndicator.value === 'bollinger' && fullBollingerData.value.length > 0) {
+    const bollingerFiltered = filterDataByRange(fullBollingerData.value, range)
+    bollingerSeries.value = [
+      { 
+        name: '가격', 
+        type: 'candlestick',
+        data: bollingerFiltered.map(d => ({
+          x: dayjs(d.date).format('MM/DD'),
+          y: [d.open, d.high, d.low, d.close]
+        }))
+      },
+      { 
+        name: '상단 밴드', 
+        type: 'line',
+        data: bollingerFiltered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.upper_band 
+        })).filter(d => d.y !== null)
+      },
+      { 
+        name: '중심선 (SMA)', 
+        type: 'line',
+        data: bollingerFiltered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.sma 
+        })).filter(d => d.y !== null)
+      },
+      { 
+        name: '하단 밴드', 
+        type: 'line',
+        data: bollingerFiltered.map(d => ({ 
+          x: dayjs(d.date).format('MM/DD'), 
+          y: d.lower_band 
+        })).filter(d => d.y !== null)
+      }
+    ]
+  }
 }
 
 const fetchMyTransactions = async () => {
@@ -151,12 +585,9 @@ const fetchData = async () => {
     const chartRes = await fetch(`/api/stock-prices/chart/?ticker=${code}&days=365`, opt)
     if (chartRes.ok) {
       const json = await chartRes.json()
-      const rawData = Array.isArray(json) ? json : (json.results || [])
-      if (rawData.length > 0) {
-        fullChartData.value = rawData.map(row => ({
-          rawDate: row.date,
-          y: [parseFloat(row.open), parseFloat(row.high), parseFloat(row.low), parseFloat(row.close)]
-        }))
+      const data = Array.isArray(json) ? json : (json.results || [])
+      if (data.length > 0) {
+        fullChartData.value = data
         updateChartRange(activeRange.value)
       }
     }
@@ -165,7 +596,6 @@ const fetchData = async () => {
   finally { loading.value = false }
 }
 
-// 커뮤니티 이동
 const goToPostDetail = (postId) => {
   router.push(`/community/${postId}`)
 }
@@ -219,6 +649,7 @@ onMounted(() => {
 onUnmounted(() => { if (polling) clearInterval(polling) })
 </script>
 
+<!-- 템플릿과 스타일은 동일 -->
 <template>
   <div class="dashboard-detail">
     <header class="detail-header-hero">
@@ -274,7 +705,32 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
         <div v-if="activeTab === 'chart'">
           <section class="chart-section shadow-card">
             <div class="card-header">
-              <h3 class="label-text">주가 흐름</h3>
+              <div class="header-left">
+                <h3 class="label-text">주가 흐름</h3>
+                <div class="indicator-tabs-inline">
+                  <button 
+                    @click="activeIndicator = 'none'" 
+                    :class="{ active: activeIndicator === 'none' }"
+                    :disabled="indicatorLoading"
+                  >
+                    기본
+                  </button>
+                  <button 
+                    @click="activeIndicator = 'ma'" 
+                    :class="{ active: activeIndicator === 'ma' }"
+                    :disabled="indicatorLoading"
+                  >
+                    이동평균선
+                  </button>
+                  <button 
+                    @click="activeIndicator = 'bollinger'" 
+                    :class="{ active: activeIndicator === 'bollinger' }"
+                    :disabled="indicatorLoading"
+                  >
+                    볼린저 밴드
+                  </button>
+                </div>
+              </div>
               <div class="range-tabs">
                 <button 
                   v-for="r in ['1W', '1M', '1Y']" 
@@ -286,15 +742,55 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
                 </button>
               </div>
             </div>
-            <div class="chart-wrapper">
+            
+              <div class="chart-wrapper">
+                <div v-if="indicatorLoading" class="loading-state">
+                  <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                  <p>데이터 계산 중...</p>
+                </div>
+
+                <template v-else>
+                  <VueApexCharts 
+                    v-if="activeIndicator === 'none' && chartSeries.length > 0"
+                    key="chart-basic"
+                    type="candlestick" 
+                    height="400" 
+                    :options="chartOptions" 
+                    :series="chartSeries" 
+                  />
+
+                  <VueApexCharts 
+                    v-else-if="activeIndicator === 'ma' && maSeries.length > 0"
+                    key="chart-ma"
+                    type="line"  height="400" 
+                    :options="maChartOptions" 
+                    :series="maSeries" 
+                  />
+
+                  <VueApexCharts 
+                    v-else-if="activeIndicator === 'bollinger' && bollingerSeries.length > 0"
+                    key="chart-bollinger"
+                    type="line" 
+                    height="400" 
+                    :options="bollingerChartOptions" 
+                    :series="bollingerSeries" 
+                  />
+
+                  <div v-else class="empty-state">차트 데이터를 불러올 수 없습니다.</div>
+                </template>
+              </div>
+
+            <div class="volume-section">
+              <div class="volume-header">
+                <span class="volume-label">거래량</span>
+              </div>
               <VueApexCharts 
-                v-if="chartSeries.length > 0 && chartSeries[0].data.length > 0" 
-                type="candlestick" 
-                height="400" 
-                :options="chartOptions" 
-                :series="chartSeries" 
+                v-if="volumeSeries.length > 0"
+                type="bar"
+                height="120"
+                :options="volumeChartOptions"
+                :series="volumeSeries"
               />
-              <div v-else class="empty-state">차트 데이터를 불러오는 중입니다...</div>
             </div>
           </section>
         </div>
@@ -441,14 +937,131 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
 .main-grid { max-width: 1200px; margin: 40px auto 0; display: grid; grid-template-columns: 8.5fr 3.5fr; gap: 30px; padding: 0 20px; }
 .shadow-card { background: #111; border-radius: 28px; padding: 30px; border: 1px solid #222; }
 
-/* 차트 섹션 */
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
-.label-text { font-size: 15px; color: #3182f6; font-weight: bold; }
-.range-tabs { display: flex; background: #000; padding: 5px; border-radius: 12px; border: 1px solid #222; }
-.range-tabs button { background: none; border: none; color: #555; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: bold; }
-.range-tabs button.active { background: #1a1a1b; color: #fff; }
+/* 차트 섹션 헤더 */
+.card-header { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+  margin-bottom: 25px; 
+}
 
-/* 커뮤니티 아이템 (더보기/통계 포함) */
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.label-text { 
+  font-size: 15px; 
+  color: #3182f6; 
+  font-weight: bold; 
+  margin: 0;
+}
+
+/* 인라인 보조 지표 버튼 */
+.indicator-tabs-inline { 
+  display: flex; 
+  gap: 6px; 
+}
+
+.indicator-tabs-inline button { 
+  background: #1a1a1b; 
+  border: 1px solid #333; 
+  color: #999; 
+  padding: 6px 14px; 
+  border-radius: 8px; 
+  cursor: pointer; 
+  font-size: 12px; 
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.indicator-tabs-inline button:hover { 
+  background: #222; 
+  color: #fff; 
+}
+
+.indicator-tabs-inline button.active { 
+  background: #3182f6; 
+  color: #fff; 
+  border-color: #3182f6;
+}
+
+.indicator-tabs-inline button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.range-tabs { 
+  display: flex; 
+  background: #000; 
+  padding: 5px; 
+  border-radius: 12px; 
+  border: 1px solid #222; 
+}
+
+.range-tabs button { 
+  background: none; 
+  border: none; 
+  color: #555; 
+  padding: 8px 16px; 
+  border-radius: 8px; 
+  cursor: pointer; 
+  font-size: 12px; 
+  font-weight: bold; 
+  transition: all 0.2s; 
+}
+
+.range-tabs button.active { 
+  background: #1a1a1b; 
+  color: #fff; 
+}
+
+/* 로딩 상태 */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 400px;
+  gap: 16px;
+}
+
+.loading-state p {
+  color: #999;
+  font-size: 14px;
+}
+
+/* 거래량 섹션 */
+.volume-section {
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid #222;
+}
+
+.volume-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.volume-label {
+  font-size: 13px;
+  color: #999;
+  font-weight: 600;
+}
+
+/* x축 라벨 스타일 */
+:deep(.apexcharts-xaxis-label) {
+  font-size: 11px !important;
+  fill: #777 !important;
+}
+
+:deep(.apexcharts-xaxis text) {
+  font-size: 11px !important;
+}
+
+/* 커뮤니티 아이템 */
 .post-item.clickable { 
   cursor: pointer; 
   transition: all 0.2s ease-in-out; 
@@ -459,8 +1072,6 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
 }
 .post-item.clickable:hover { background: rgba(255, 255, 255, 0.05); transform: translateX(5px); }
 .post-meta { display: flex; gap: 10px; font-size: 13px; color: #666; margin-bottom: 10px; }
-
-/* 3줄 생략 CSS */
 .post-text { 
   font-size: 16px; 
   line-height: 1.6; 
@@ -474,44 +1085,61 @@ onUnmounted(() => { if (polling) clearInterval(polling) })
 }
 .more-label { display: inline-block; font-size: 13px; color: #3182f6; font-weight: bold; margin-bottom: 15px; opacity: 0.8; }
 .post-stats { display: flex; gap: 15px; font-size: 13px; color: #888; }
+.stat-item { display: inline-flex; align-items: center; gap: 4px; }
 
 /* 거래 내역 */
 .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; }
+.log-header h3 { margin: 0; font-size: 15px; color: #3182f6; font-weight: bold; }
 .log-list { max-height: 550px; overflow-y: auto; padding-right: 5px; }
 .log-item-v2 { padding: 18px 0; border-bottom: 1px solid #222; }
+.item-top { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.item-bottom { display: flex; justify-content: space-between; align-items: center; }
 .type-tag { padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: bold; }
 .type-tag.buy { background: rgba(240, 68, 82, 0.2); color: #f04452; }
 .type-tag.sell { background: rgba(49, 130, 246, 0.2); color: #3182f6; }
+.time { font-size: 12px; color: #666; }
+.quantity { font-size: 13px; color: #999; }
+.total-amount { font-size: 15px; font-weight: bold; }
 
 /* 모달 */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(8px); display: flex; justify-content: center; align-items: center; z-index: 3000; }
 .modal-content { background: #1c1c1e; width: 400px; border-radius: 28px; padding: 32px; border: 1px solid #333; }
 .modal-header h2 { font-size: 24px; font-weight: 800; margin-bottom: 4px; }
 .price-tag { color: #8e8e93; font-size: 14px; }
-.input-section { margin: 24px 0 20px; }
+.modal-body { margin: 24px 0; }
+.input-section { margin-bottom: 20px; }
 .input-section label { font-size: 13px; color: #999; display: block; margin-bottom: 10px; }
 .input-wrapper { position: relative; display: flex; align-items: center; }
 .trade-input { background: #2c2c2e; border: 1px solid #3a3a3c; border-radius: 16px; padding: 16px 20px; width: 100%; color: #fff; font-size: 20px; font-weight: bold; text-align: right; padding-right: 50px; outline: none; }
+.trade-input:focus { border-color: #3182f6; }
 .unit { position: absolute; right: 20px; color: #999; font-weight: bold; }
 .total-preview { background: #2c2c2e; padding: 16px; border-radius: 16px; margin-bottom: 32px; }
 .preview-row { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: #999; }
 .total-value { font-size: 18px; font-weight: 800; }
 .modal-footer { display: flex; gap: 12px; }
-.btn-cancel { flex: 1; background: #3a3a3c; color: #fff; border: none; padding: 16px; border-radius: 16px; font-weight: bold; cursor: pointer; }
-.btn-confirm { flex: 2; border: none; color: #fff; padding: 16px; border-radius: 16px; font-weight: bold; cursor: pointer; }
+.btn-cancel { flex: 1; background: #3a3a3c; color: #fff; border: none; padding: 16px; border-radius: 16px; font-weight: bold; cursor: pointer; transition: opacity 0.2s; }
+.btn-cancel:hover { opacity: 0.8; }
+.btn-confirm { flex: 2; border: none; color: #fff; padding: 16px; border-radius: 16px; font-weight: bold; cursor: pointer; transition: opacity 0.2s; }
+.btn-confirm:hover { opacity: 0.9; }
 
 /* 공용 유틸리티 */
 .text-red { color: #f04452; }
 .text-blue { color: #3182f6; }
+.text-gray { color: #999; }
 .buy-bg { background: #f04452; }
 .sell-bg { background: #3182f6; }
 .live-dot { width: 10px; height: 10px; background: #4caf50; border-radius: 50%; box-shadow: 0 0 10px #4caf50; }
+.empty-state { text-align: center; padding: 60px 20px; color: #666; }
+.empty-log { text-align: center; padding: 40px 20px; color: #666; font-size: 14px; }
 
 .custom-scrollbar::-webkit-scrollbar { width: 4px; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
 
 @media (max-width: 1024px) { 
   .main-grid { grid-template-columns: 1fr; } 
   .detail-header-hero { height: 350px; }
+  .stock-title { font-size: 28px; }
+  .main-price { font-size: 32px; }
 }
 </style>
