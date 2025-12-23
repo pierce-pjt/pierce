@@ -72,8 +72,7 @@ def get_current_user(request):
 
 # =================================================
 # 1. User & Social ViewSets
-# =================================================
-@method_decorator(csrf_exempt, name='dispatch')
+# =================================================@method_decorator(csrf_exempt, name='dispatch')
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -149,7 +148,8 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="me/portfolio-summary")
     def portfolio_summary(self, request):
         user = get_current_user(request)
-        holdings = StockHolding.objects.filter(user=user)
+        # 🆕 수량이 0보다 큰 것만 조회
+        holdings = StockHolding.objects.filter(user=user, quantity__gt=0)
         
         if not holdings.exists():
             return Response({
@@ -194,7 +194,11 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="me/holdings")
     def holdings(self, request):
         user = get_current_user(request)
-        holdings = StockHolding.objects.filter(user=user).select_related('company')
+        # 🆕 수량이 0보다 큰 것만 조회
+        holdings = StockHolding.objects.filter(
+            user=user, 
+            quantity__gt=0
+        ).select_related('company')
 
         company_codes = [h.company_id for h in holdings]
         latest_prices = StockPrice.objects.filter(
@@ -316,7 +320,8 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="portfolio-summary")
     def user_portfolio_summary(self, request, pk=None):
         target_user = self.get_object()
-        holdings = StockHolding.objects.filter(user=target_user)
+        # 🆕 수량이 0보다 큰 것만 조회
+        holdings = StockHolding.objects.filter(user=target_user, quantity__gt=0)
         
         if not holdings.exists():
             return Response({
@@ -361,7 +366,11 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="holdings")
     def user_holdings(self, request, pk=None):
         target_user = self.get_object()
-        holdings = StockHolding.objects.filter(user=target_user).select_related('company')
+        # 🆕 수량이 0보다 큰 것만 조회
+        holdings = StockHolding.objects.filter(
+            user=target_user,
+            quantity__gt=0
+        ).select_related('company')
         
         if not holdings.exists():
             return Response([])
