@@ -67,7 +67,7 @@ onMounted(() => {
 <style scoped>
 .app { 
   min-height: 100vh; 
-  background: #050711; 
+  background: #17171C; 
   color: #f5f5f7; 
   font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
@@ -78,7 +78,7 @@ onMounted(() => {
   top: 0; 
   z-index: 20; 
   backdrop-filter: blur(14px); 
-  background: rgba(5,7,17,0.8); 
+  background: #17171C(5,7,17,0.8); 
   border-bottom: 1px solid rgba(255,255,255,0.05); 
 }
 

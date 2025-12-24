@@ -8,6 +8,7 @@ const authStore = useAuthStore()
 const posts = ref([])
 const topInvestors = ref([])
 const showWriteModal = ref(false)
+const currentSort = ref('latest') // 정렬 상태 추가
 
 // 📝 글쓰기 데이터
 const newPostTitle = ref('')
@@ -63,14 +64,32 @@ const formatPrice = (val) => {
   return Math.floor(val).toLocaleString()
 }
 
-const fetchData = async () => {
+// 🔄 정렬 기능 추가
+const fetchData = async (sortType = currentSort.value) => {
   try {
-    const feedRes = await fetch(`${API_BASE}/posts/feed/`)
-    if (feedRes.ok) posts.value = await feedRes.json()
+    const feedRes = await fetch(`${API_BASE}/posts/feed/?sort=${sortType}`, {
+      credentials: 'include'
+    })
+    if (feedRes.ok) {
+      posts.value = await feedRes.json()
+    } else if (feedRes.status === 401 && sortType === 'following') {
+      alert('팔로잉 글 보기는 로그인이 필요합니다.')
+      currentSort.value = 'latest'
+      await fetchData('latest')
+    }
     
     const rankRes = await fetch(`${API_BASE}/users/rank/top/`)
     if (rankRes.ok) topInvestors.value = await rankRes.json()
   } catch (e) { console.error(e) }
+}
+
+const changeSort = (sortType) => {
+  if (sortType === 'following' && !authStore.isAuthenticated) {
+    alert('팔로잉 글 보기는 로그인이 필요합니다.')
+    return
+  }
+  currentSort.value = sortType
+  fetchData(sortType)
 }
 
 const handleFileChange = (e) => {
@@ -164,6 +183,34 @@ onMounted(fetchData)
           <p class="subtitle">노하우를 공유하고 나만의 투자멘토를 찾아보세요.</p>
         </div>
         <button class="write-btn" @click="showWriteModal = true">글쓰기</button>
+      </div>
+
+      <!-- 🆕 정렬 탭 추가 -->
+      <div class="sort-tabs">
+        <button 
+          :class="['sort-tab', { active: currentSort === 'latest' }]"
+          @click="changeSort('latest')"
+        >
+          ⏰ 최신글
+        </button>
+        <button 
+          :class="['sort-tab', { active: currentSort === 'popular' }]"
+          @click="changeSort('popular')"
+        >
+          🔥 인기글
+        </button>
+        <button 
+          :class="['sort-tab', { active: currentSort === 'following' }]"
+          @click="changeSort('following')"
+        >
+          👥 팔로잉
+        </button>
+      </div>
+
+      <!-- 결과 없을 때 메시지 -->
+      <div v-if="posts.length === 0" class="empty-state">
+        <p v-if="currentSort === 'following'">팔로우한 사용자의 글이 없습니다.</p>
+        <p v-else>아직 게시글이 없습니다.</p>
       </div>
 
       <div v-for="post in posts" :key="post.id" class="post-card" @click="openDetail(post)">
@@ -304,11 +351,51 @@ onMounted(fetchData)
 @media(min-width: 900px) { .sidebar { display: block; } }
 
 /* 🟠 헤더 영역 */
-.feed-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
+.feed-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
 .header-text h2 { font-size: 28px; margin: 0 0 8px 0; font-weight: 800; }
 .subtitle { color: #9ca3af; font-size: 15px; margin: 0; }
 .write-btn { background: #2563eb; color: white; border: none; padding: 10px 24px; border-radius: 24px; font-weight: bold; cursor: pointer; transition: 0.2s; }
 .write-btn:hover { background: #1d4ed8; transform: scale(1.05); }
+
+/* 🆕 정렬 탭 스타일 */
+.sort-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #222;
+  padding-bottom: 0;
+}
+
+.sort-tab {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+  position: relative;
+  bottom: -1px;
+}
+
+.sort-tab:hover {
+  color: #d1d5db;
+}
+
+.sort-tab.active {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+}
+
+/* 빈 상태 메시지 */
+.empty-state {
+  text-align: center;
+  padding: 80px 20px;
+  color: #6b7280;
+  font-size: 15px;
+}
 
 /* 🟡 게시글 카드 (개선) */
 .post-card { background: #14141409; padding: 24px; border-radius: 20px; margin-bottom: 24px; border: 1px solid #222; cursor: pointer; transition: 0.2s; }

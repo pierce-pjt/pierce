@@ -13,6 +13,7 @@ from pgvector.django import CosineDistance
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.db.models.functions import Coalesce, Cast
+from rag.models import Follow 
 
 import yfinance as yf
 from django.db import transaction
@@ -473,10 +474,57 @@ class PostViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def feed(self, request):
+        """
+        게시글 피드 조회 (정렬 기능 포함)
+        GET /api/posts/feed/?sort=latest|popular|following&ticker=종목코드
+        """
+        sort_by = request.query_params.get("sort", "latest")
         ticker = request.query_params.get("ticker")
-        qs = self.get_queryset().order_by("-created_at")
+        
+        # 기본 쿼리셋
+        qs = self.get_queryset()
+        
+        # 정렬 방식에 따라 처리
+        if sort_by == "popular":
+            # 좋아요 + 댓글 수 기준 정렬
+            qs = qs.annotate(
+                engagement=Count("likes", distinct=True) + Count("comments", distinct=True)
+            ).order_by("-engagement", "-created_at")
+            
+        elif sort_by == "following":
+            # 팔로우한 사용자의 글만
+            try:
+                user = get_current_user(request)
+            except PermissionDenied:
+                # 비로그인 사용자
+                return Response(
+                    {"detail": "로그인이 필요합니다."}, 
+                    status=401
+                )
+            
+            # 디버깅: 현재 유저 확인
+            print(f"현재 유저: {user}, 유저 ID: {user.id}")
+            
+            # Follow 모델을 통해 팔로잉한 유저 ID 목록 가져오기
+            following_user_ids = Follow.objects.filter(
+                follower=user
+            ).values_list('following_id', flat=True)
+            
+            # 디버깅: 팔로잉 유저 ID 확인
+            print(f"팔로잉 유저 IDs: {list(following_user_ids)}")
+            
+            qs = qs.filter(author_id__in=following_user_ids).order_by("-created_at")
+            
+            # 디버깅: 필터링된 게시글 수
+            print(f"필터링된 게시글 수: {qs.count()}")
+            
+        else:  # "latest" (기본값)
+            qs = qs.order_by("-created_at")
+        
+        # 종목 필터링 (기존 기능 유지)
         if ticker:
             qs = qs.filter(ticker=ticker)
+        
         return Response(self.get_serializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"])
@@ -1051,3 +1099,5 @@ class StrategyNoteViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=get_current_user(self.request))
+
+
