@@ -526,21 +526,49 @@ const loadAllData = async () => {
   }
 }
 
+const normalizeList = (data) => {
+  // DRF pagination or plain array 둘 다 처리
+  if (Array.isArray(data)) return data
+  if (data?.results && Array.isArray(data.results)) return data.results
+  return []
+}
+
 const loadFollowers = async () => {
   try {
     const res = await mypageAPI.getFollowers()
-    followers.value = res.data
+    followers.value = normalizeList(res.data)
     showFollowersModal.value = true
-  } catch (e) { console.error('팔로워 로드 실패', e) }
+
+    console.log('팔로워 응답:', res.data)
+    console.log('팔로워 배열:', followers.value)
+  } catch (e) {
+    console.error('팔로워 로드 실패', e)
+  }
 }
+import { nextTick } from 'vue'
 
 const loadFollowing = async () => {
   try {
     const res = await mypageAPI.getFollowing()
-    following.value = res.data
+    following.value = Array.isArray(res.data) ? [...res.data] : (res.data?.results ?? [])
+    await nextTick()
     showFollowingModal.value = true
-  } catch (e) { console.error('팔로잉 로드 실패', e) }
+
+    console.log('showFollowingModal:', showFollowingModal.value)
+  } catch (e) {
+    console.error('팔로잉 로드 실패', e)
+  }
 }
+
+const followersCount = computed(() => {
+  const v = user.value?.followers_count
+  return Number.isFinite(Number(v)) ? Number(v) : followers.value.length
+})
+
+const followingCount = computed(() => {
+  const v = user.value?.following_count
+  return Number.isFinite(Number(v)) ? Number(v) : following.value.length
+})
 
 const toggleFollow = async (targetUserId) => {
   try {
@@ -558,7 +586,7 @@ const toggleFollow = async (targetUserId) => {
         const fUser = followers.value.find(u => u.id === targetUserId)
         if (fUser) fUser.is_following = data.is_following
       }
-      data.is_following ? user.value.following_count++ : user.value.following_count--
+      data.is_following ? user.value.following_count+1 : user.value.following_count-1
     }
   } catch (e) { alert('처리 실패') }
 }

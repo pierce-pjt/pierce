@@ -11,19 +11,25 @@ from .models import (
 # 1. User
 # ==========================================
 class UserReadSerializer(serializers.ModelSerializer):
-    followers_count = serializers.IntegerField(read_only=True)
-    following_count = serializers.IntegerField(read_only=True)
+    followers_count = serializers.IntegerField(source="followers.count", read_only=True)
+    following_count = serializers.IntegerField(source="following.count", read_only=True)
     is_following = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'nickname', 'profile_image_url', 'followers_count', 'following_count', 'is_following', 'mileage','realized_profit', 'total_return_rate']
+        fields = [
+            "id", "nickname", "profile_image_url",
+            "followers_count", "following_count",
+            "is_following", "mileage", "realized_profit", "total_return_rate",
+        ]
 
     def get_is_following(self, obj):
-        request = self.context.get('request')
-        if not request: return False
-        current_user_id = request.session.get('user_id')
-        if not current_user_id: return False
+        request = self.context.get("request")
+        if not request:
+            return False
+        current_user_id = request.session.get("user_id")
+        if not current_user_id:
+            return False
         return obj.followers.filter(follower_id=current_user_id).exists()
 
 class UserSerializer(serializers.ModelSerializer):
