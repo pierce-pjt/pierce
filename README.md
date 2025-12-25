@@ -190,13 +190,6 @@ pierce/
 - 관심 종목 관리
 
 
-### API 테스트
-
-Django REST Framework의 Browsable API 활용:
-```
-http://localhost:8000/api/
-```
-
 주요 엔드포인트:
 - `GET /api/stocks/` - 종목 리스트
 - `GET /api/stocks/{ticker}/` - 종목 상세
@@ -226,12 +219,6 @@ Airflow DAG 관리:
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-### 코딩 컨벤션
-- Python: PEP 8 준수
-- JavaScript/Vue: ESLint + Prettier 설정 적용
-- Commit Message: [Conventional Commits](https://www.conventionalcommits.org/) 사용
-
-
 ## 👥 팀원
 
 - **[JeonginWon](https://github.com/JeonginWon)** - Backend & AI & Frontend & Data & Design
@@ -240,5 +227,5 @@ Airflow DAG 관리:
 ---
 
 <p align="center">
-  Made with ❤️ by Pierce Team
+  Made with ❤️ by Apes' Investment Lab
 </p>
