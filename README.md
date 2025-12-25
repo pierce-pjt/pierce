@@ -1,9 +1,6 @@
 ### 기획 배경
 정보 과부하 시대에 개인 투자자가 **뉴스와 주가 간의 객관적 상관관계**를 파악하기 어려운 문제를 해결하고자 시작되었습니다.
 
-**TEAM. 개미투자연구소**
-
-
 # 📊 Pierce - AI 기반 주식 투자 플랫폼
 
 > **뉴스 기반 종목 추천부터 모의 투자, 커뮤니티까지 - 올인원 주식 투자 학습 플랫폼**
@@ -12,7 +9,9 @@
 [![Django](https://img.shields.io/badge/Django-5.0+-green.svg)](https://www.djangoproject.com/)
 [![Vue.js](https://img.shields.io/badge/Vue.js-3.0+-4FC08D.svg)](https://vuejs.org/)
 [![Airflow](https://img.shields.io/badge/Airflow-2.8+-017CEE.svg)](https://airflow.apache.org/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+###
+![아키텍쳐](./image/architecture.png)
 
 ## 🎯 프로젝트 개요
 
@@ -231,9 +230,6 @@ Airflow DAG 관리:
 - JavaScript/Vue: ESLint + Prettier 설정 적용
 - Commit Message: [Conventional Commits](https://www.conventionalcommits.org/) 사용
 
-## 📝 라이선스
-
-이 프로젝트는 MIT 라이선스 하에 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
 
 ## 👥 팀원
 
